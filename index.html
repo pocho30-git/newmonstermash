@@ -152,14 +152,27 @@ let paused = false;
 
 class Enemy{
     constructor(){
-        this.x = Math.random()*canvas.width;
-        this.y = Math.random()*canvas.height;
         this.r = 20;
-        this.baseSpeed = 1 + round*0.15;
-        this.speed = this.baseSpeed;
-        this.hp = 35 + round*8;
         this.color = `hsl(${Math.random()*360},80%,60%)`;
         this.flash = 0;
+        
+        // Much slower speed scaling formula for late game balance
+        this.baseSpeed = 1 + round * 0.05; 
+        this.speed = this.baseSpeed;
+        this.hp = 35 + round * 8;
+
+        // Prevention algorithm to avoid spawning directly on top of the player
+        let safeSpawn = false;
+        while(!safeSpawn) {
+            this.x = Math.random() * canvas.width;
+            this.y = Math.random() * canvas.height;
+            
+            let distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
+            // Minimum safe buffer distance of 250 pixels
+            if(distToPlayer > 250) {
+                safeSpawn = true;
+            }
+        }
     }
 
     update(){
@@ -167,8 +180,10 @@ class Enemy{
         let dy = player.y - this.y;
         let dist = Math.hypot(dx,dy);
 
-        this.x += dx/dist * this.speed;
-        this.y += dy/dist * this.speed;
+        if (dist > 0) {
+            this.x += dx/dist * this.speed;
+            this.y += dy/dist * this.speed;
+        }
 
         if(dist < this.r + player.r){
             player.hp -= 0.15;
@@ -208,28 +223,26 @@ class Guard {
         this.y = y;
         this.r = 14;
         this.speed = 3.5;
-        this.role = role; // "healer", "shooter", "melee", "bomber"
+        this.role = role;
         
-        // Dynamic properties based on role
         if(this.role === "healer") {
-            this.color = "#ff47b6"; // Pink
+            this.color = "#ff47b6";
             this.healCooldown = 0;
             this.pulseRadius = 0;
         } else if(this.role === "shooter") {
-            this.color = "#47f3ff"; // Cyan
+            this.color = "#47f3ff";
             this.shootCooldown = 0;
         } else if(this.role === "bomber") {
-            this.color = "#ff8147"; // Orange
-            this.speed = 4.5; // Fast runner
+            this.color = "#ff8147";
+            this.speed = 4.5;
         } else {
-            this.color = "#47ff9c"; // Green (Melee)
+            this.color = "#47ff9c";
             this.damage = 1.5;
         }
     }
 
     update() {
         if (this.role === "healer") {
-            // Stay close to player
             let dx = player.x - this.x;
             let dy = player.y - this.y;
             let dist = Math.hypot(dx, dy);
@@ -238,13 +251,11 @@ class Guard {
                 this.y += (dy / dist) * this.speed;
             }
 
-            // Continuous pulse visual handling
             if (this.pulseRadius > 0) this.pulseRadius += 4;
             if (this.pulseRadius > 100) this.pulseRadius = 0;
 
-            // Trigger healing functionality
             this.healCooldown++;
-            if (this.healCooldown >= 90) { // Every 1.5 seconds
+            if (this.healCooldown >= 90) {
                 this.healCooldown = 0;
                 this.pulseRadius = 1;
                 if (player.hp < 100) {
@@ -254,7 +265,6 @@ class Guard {
             }
         } 
         else if (this.role === "shooter") {
-            // Stay close to player
             let dx = player.x - this.x;
             let dy = player.y - this.y;
             let dist = Math.hypot(dx, dy);
@@ -263,9 +273,8 @@ class Guard {
                 this.y += (dy / dist) * this.speed;
             }
 
-            // Shoot targeting closest enemy
             this.shootCooldown++;
-            if (this.shootCooldown >= 45) { // Every 0.75 seconds
+            if (this.shootCooldown >= 45) {
                 let target = nearestEnemy(this.x, this.y);
                 if (target) {
                     this.shootCooldown = 0;
@@ -281,7 +290,6 @@ class Guard {
             }
         } 
         else if (this.role === "bomber") {
-            // Hunt enemies down
             let target = nearestEnemy(this.x, this.y);
             if (target) {
                 let dx = target.x - this.x;
@@ -293,12 +301,10 @@ class Guard {
                     this.y += (dy / dist) * this.speed;
                 }
 
-                // Boom! Detonate on contact
                 if (dist < this.r + target.r) {
                     this.explode();
                 }
             } else {
-                // Return to player if map is clear
                 let dx = player.x - this.x;
                 let dy = player.y - this.y;
                 let dist = Math.hypot(dx, dy);
@@ -309,7 +315,6 @@ class Guard {
             }
         } 
         else if (this.role === "melee") {
-            // Standard original guard logic tracking nearest enemy
             let target = nearestEnemy(this.x, this.y);
             if (target) {
                 let dx = target.x - this.x;
@@ -342,7 +347,6 @@ class Guard {
 
     explode() {
         let blastRadius = 110;
-        // Search through the enemies backwards to prevent slicing errors
         for (let i = enemies.length - 1; i >= 0; i--) {
             let e = enemies[i];
             let dist = Math.hypot(e.x - this.x, e.y - this.y);
@@ -355,7 +359,6 @@ class Guard {
             }
         }
         
-        // Spawn text effect & clear this specific bomber instance from processing
         damageTexts.push(new DamageText(this.x, this.y, "BOOM!", "#ff8147"));
         let index = guards.indexOf(this);
         if (index > -1) guards.splice(index, 1);
@@ -363,8 +366,6 @@ class Guard {
 
     draw() {
         ctx.save();
-        
-        // Draw healer pulse range
         if (this.role === "healer" && this.pulseRadius > 0) {
             ctx.strokeStyle = `rgba(71, 255, 156, ${1 - this.pulseRadius/100})`;
             ctx.lineWidth = 2;
@@ -381,7 +382,6 @@ class Guard {
         ctx.fill();
         ctx.stroke();
 
-        // Decorative inner mask/helmet symbol to represent dynamic roles
         ctx.fillStyle = "rgba(0,0,0,0.3)";
         ctx.beginPath();
         ctx.arc(this.x, this.y + 2, 6, 0, Math.PI, true);
@@ -533,9 +533,9 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
 
 function spawnWave(){
     enemies = [];
-    let amount = 5 + round*3;
+    let amount = 5 + round * 3;
 
-    for(let i=0;i<amount;i++){
+    for(let i=0; i<amount; i++){
         enemies.push(new Enemy());
     }
     updateUI();
@@ -733,7 +733,6 @@ function update(){
         });
     }
 
-    // Process guards updates backwards in case a bomber explodes and self-removes
     for (let i = guards.length - 1; i >= 0; i--) {
         if(guards[i]) guards[i].update();
     }
@@ -941,7 +940,6 @@ function showUpgrades(){
                 } else { 
                     abilities.guards.max += 1; 
                 }
-                // Automatically summon a new random type of guard
                 spawnRandomGuard();
             }
         }
