@@ -26,48 +26,7 @@ canvas{
     z-index:10;
     font-size:20px;
     line-height:1.5;
-    pointer-events: none;
-}
-
-/* SECRET DEVELOPER PANEL STYLE */
-#devPanel {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    background: rgba(0, 0, 0, 0.75);
-    border: 2px dashed #ff0055;
-    border-radius: 10px;
-    padding: 15px;
-    z-index: 100;
-    display: none; /* Hidden by default */
-    width: 220px;
-}
-
-#devPanel h3 {
-    margin: 0 0 10px 0;
-    font-size: 16px;
-    color: #ff0055;
-    text-align: center;
-    letter-spacing: 1px;
-}
-
-.devBtn {
-    width: 100%;
-    background: #222;
-    color: #00ffaa;
-    border: 1px solid #444;
-    padding: 8px;
-    margin: 4px 0;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 13px;
-    text-align: left;
-    transition: 0.2s;
-}
-
-.devBtn:hover {
-    background: #333;
-    border-color: #00ffaa;
+    user-select: none;
 }
 
 #upgradeMenu{
@@ -83,6 +42,7 @@ canvas{
     z-index:20;
     display:none;
     text-align:center;
+    user-select: none;
 }
 
 .upgradeBtn{
@@ -107,6 +67,7 @@ canvas{
     text-align:center;
     display:none;
     z-index:30;
+    user-select: none;
 }
 
 button{
@@ -122,20 +83,12 @@ button{
 <body>
 
 <div id="ui">
-❤️ HP: <span id="hp">100</span> / 100 <span id="godModeStatus" style="color:#ff0055; font-weight:bold;"></span><br>
+❤️ HP: <span id="hp">100</span> / 100<br>
 ⚔️ Round: <span id="round">1</span><br>
 👾 Enemies: <span id="left">0</span><br>
 ⭐ Level: <span id="level">1</span><br>
-🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span>
-</div>
-
-<div id="devPanel">
-    <h3>🛠️ DEV CHEATS (~ Key)</h3>
-    <button class="devBtn" onclick="devKillAll()">💥 Insta-Kill All</button>
-    <button class="devBtn" onclick="devHeal()">❤️ Heal to Full</button>
-    <button class="devBtn" onclick="devSpawnGuards()">🛡️ Max Guard Cap + Spawn</button>
-    <button class="devBtn" onclick="devToggleGodMode()">😇 Toggle God Mode</button>
-    <button class="devBtn" onclick="devSuperSpeed()">⚡ Super Speed Mode</button>
+🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span><br>
+🛸 Decoy Cooldown: <span id="decoyCd">Ready</span>
 </div>
 
 <div id="upgradeMenu">
@@ -154,132 +107,104 @@ button{
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-canvas.width = innerWidth;
-canvas.height = innerHeight;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+window.addEventListener("resize", () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
 
 const keys = {};
-const mouse = {x:0,y:0};
+const mouse = {x: canvas.width/2, y: canvas.height/2};
 
-// Developer state flags
-let isGodMode = false;
-let bulletIntervalId = null;
-
-document.addEventListener("keydown",e=>{
+document.addEventListener("keydown", e => {
     keys[e.key.toLowerCase()] = true;
     
     if(e.key.toLowerCase() === "q" && !paused && abilities.guards) {
         spawnGuard();
     }
-
-    // Secret trigger key: '~' or '`'
-    if(e.key === "`" || e.key === "~") {
-        const panel = document.getElementById("devPanel");
-        panel.style.display = panel.style.display === "block" ? "none" : "block";
+    // Handle Decoy manual deployment
+    if(e.key.toLowerCase() === "e" && !paused && abilities.decoy && decoyCooldownTimer <= 0) {
+        spawnDecoy();
     }
 });
 
-document.addEventListener("keyup",e=>{
+document.addEventListener("keyup", e => {
     keys[e.key.toLowerCase()] = false;
 });
 
-canvas.addEventListener("mousemove",e=>{
+canvas.addEventListener("mousemove", e => {
     mouse.x = e.clientX;
     mouse.y = e.clientY;
 });
 
 const player = {
-    x:canvas.width/2,
-    y:canvas.height/2,
-    r:20,
-    speed:4,
-    hp:100,
-    damage:15,
-    fireRate:320,
-    bullets:[],
-    level:1,
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    r: 20,
+    baseSpeed: 4,
+    speed: 4,
+    hp: 100,
+    damage: 15,
+    baseFireRate: 320,
+    fireRate: 320,
+    bullets: [],
+    level: 1,
     vampireKills: 0 
 };
 
 const abilities = {
-    speedArrows:null,
-    bubbles:null,
-    feathers:null,
-    bananas:null,
-    pizza:null,
-    darkEnergy:null,
-    guards:null,
-    vampiric:null,      
-    frostNova:null,     
-    chainLightning:null,
-    singularity:null    
+    speedArrows: null,
+    bubbles: null,
+    feathers: null,
+    bananas: null,
+    pizza: null,
+    darkEnergy: null,
+    guards: null,
+    vampiric: null,      
+    frostNova: null,     
+    chainLightning: null,
+    singularity: null,
+    decoy: null,         // Added
+    dragonsBreath: null, // Added
+    adrenaline: null     // Added
 };
 
 let enemies = [];
 let guards = []; 
-let particles = [];
 let damageTexts = [];
 let singularities = []; 
+let flames = [];         // Added
+let activeDecoy = null;  // Added
+let decoyCooldownTimer = 0; // Added
 let round = 1;
 let paused = false;
 
-/* ==========================================================================
-   DEVELOPER CHEAT FUNCTIONS
-   ========================================================================== */
-function devKillAll() {
-    if(paused && enemies.length === 0) return;
-    enemies.forEach(e => {
-        e.hp = 0;
-        damageTexts.push(new DamageText(e.x, e.y, "DEV SMITE!", "#ff0055"));
-    });
-}
-
-function devHeal() {
-    player.hp = 100;
-    damageTexts.push(new DamageText(player.x, player.y - 25, "MAX HEALED", "#00ffaa"));
-}
-
-function devSpawnGuards() {
-    if(!abilities.guards) {
-        abilities.guards = { max: 5 };
-    } else {
-        abilities.guards.max += 5;
-    }
-    for(let i=0; i<5; i++) {
-        spawnGuard();
-    }
-    damageTexts.push(new DamageText(player.x, player.y + 25, "+5 GUARDS ARRIVED", "#47ff9c"));
-}
-
-function devToggleGodMode() {
-    isGodMode = !isGodMode;
-    const statusText = document.getElementById("godModeStatus");
-    statusText.textContent = isGodMode ? "[GOD MODE]" : "";
-    damageTexts.push(new DamageText(player.x, player.y - 45, isGodMode ? "INVINCIBLE" : "MORTAL", "#ffaa00"));
-}
-
-function devSuperSpeed() {
-    player.speed = 12;
-    player.fireRate = 60;
-    player.damage += 20;
-    startShootingClock(); // Restart the shooting interval with new speed
-    damageTexts.push(new DamageText(player.x, player.y - 25, "HYPER DRIVE", "#00ffff"));
-}
-/* ========================================================================== */
-
-class Enemy{
-    constructor(){
-        this.x = Math.random()*canvas.width;
-        this.y = Math.random()*canvas.height;
+class Enemy {
+    constructor() {
         this.r = 20;
-        this.baseSpeed = 1 + round*0.15; 
+        
+        let spawnFar = false;
+        while (!spawnFar) {
+            this.x = Math.random() * canvas.width;
+            this.y = Math.random() * canvas.height;
+            let distToPlayer = Math.hypot(this.x - player.x, this.y - player.y);
+            if (distToPlayer > 250) { 
+                spawnFar = true;
+            }
+        }
+
+        this.baseSpeed = 1 + round * 0.15; 
         this.speed = this.baseSpeed;
-        this.hp = 35 + round*8;
-        this.color = `hsl(${Math.random()*360},80%,60%)`;
+        this.hp = 35 + round * 8;
+        this.color = `hsl(${Math.random() * 360}, 80%, 60%)`;
         this.flash = 0;
         this.frozenTimer = 0;
+        this.hasChained = false;
     }
 
-    update(){
+    update() {
         singularities.forEach(s => {
             let sDist = Math.hypot(s.x - this.x, s.y - this.y);
             if(sDist < s.radius) {
@@ -296,17 +221,23 @@ class Enemy{
             return; 
         }
 
-        let dx = player.x - this.x;
-        let dy = player.y - this.y;
-        let dist = Math.hypot(dx,dy);
+        // FIX/FEATURE: Pivot targeting vector to active decoy if one exists
+        let targetX = (activeDecoy) ? activeDecoy.x : player.x;
+        let targetY = (activeDecoy) ? activeDecoy.y : player.y;
 
-        this.x += dx/dist * this.speed;
-        this.y += dy/dist * this.speed;
+        let dx = targetX - this.x;
+        let dy = targetY - this.y;
+        let dist = Math.hypot(dx, dy);
 
-        if(dist < this.r + player.r){
-            if(!isGodMode) { // God mode check
-                player.hp -= 0.15;
-            }
+        if (dist > 0) {
+            this.x += (dx / dist) * this.speed;
+            this.y += (dy / dist) * this.speed;
+        }
+
+        // Only deal damage if colliding directly with real player
+        let distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
+        if(distToPlayer < this.r + player.r){
+            player.hp -= 0.15;
         }
 
         if(this.flash > 0){
@@ -316,7 +247,7 @@ class Enemy{
         this.speed = this.baseSpeed; 
     }
 
-    draw(){
+    draw() {
         if(this.frozenTimer > 0) {
             ctx.fillStyle = "#a6f2ff"; 
         } else {
@@ -324,7 +255,7 @@ class Enemy{
         }
 
         ctx.beginPath();
-        ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
+        ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
         ctx.fill();
 
         if(this.frozenTimer > 0) {
@@ -335,14 +266,14 @@ class Enemy{
 
         ctx.fillStyle = "black";
         ctx.beginPath();
-        ctx.arc(this.x-6,this.y-5,3,0,Math.PI*2);
-        ctx.arc(this.x+6,this.y-5,3,0,Math.PI*2);
+        ctx.arc(this.x - 6, this.y - 5, 3, 0, Math.PI * 2);
+        ctx.arc(this.x + 6, this.y - 5, 3, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.strokeStyle = "black";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(this.x,this.y+3,7,0,Math.PI);
+        ctx.arc(this.x, this.y + 3, 7, 0, Math.PI);
         ctx.stroke();
     }
 }
@@ -353,10 +284,13 @@ class Guard {
         this.y = y;
         this.r = 14;
         this.speed = 3.5;
-        this.damage = 1.2; 
+        this.damage = 12; 
+        this.attackCooldown = 0; 
     }
 
     update() {
+        if (this.attackCooldown > 0) this.attackCooldown--;
+
         let target = nearestEnemy(this.x, this.y);
         if (target) {
             let dx = target.x - this.x;
@@ -369,11 +303,9 @@ class Guard {
             }
 
             if (dist < this.r + target.r) {
-                damageEnemy(target, this.damage, dx / dist, dy / dist, "guard");
-                
-                if (target.hp <= 0) {
-                    let index = enemies.indexOf(target);
-                    if (index > -1) enemies.splice(index, 1);
+                if (this.attackCooldown === 0) {
+                    damageEnemy(target, this.damage, dx / dist, dy / dist, "guard");
+                    this.attackCooldown = 25; 
                 }
             }
         } else {
@@ -407,90 +339,90 @@ class Guard {
     }
 }
 
-class Projectile{
-    constructor(x,y,dx,dy,size,color,damage,type){
-        this.x=x;
-        this.y=y;
-        this.dx=dx;
-        this.dy=dy;
-        this.size=size;
-        this.color=color;
-        this.damage=damage;
-        this.life=300;
-        this.type=type;
-        this.returning=false;
-        this.rotation=0;
+class Projectile {
+    constructor(x, y, dx, dy, size, color, damage, type) {
+        this.x = x;
+        this.y = y;
+        this.dx = dx;
+        this.dy = dy;
+        this.size = size;
+        this.color = color;
+        this.damage = damage;
+        this.life = 300;
+        this.type = type;
+        this.returning = false;
+        this.rotation = 0;
     }
 
-    update(){
+    update() {
         this.x += this.dx;
         this.y += this.dy;
         this.life--;
         this.rotation += 0.15;
     }
 
-    draw(){
+    draw() {
         ctx.save();
-        ctx.translate(this.x,this.y);
+        ctx.translate(this.x, this.y);
         ctx.rotate(this.rotation);
 
-        if(this.type === "bullet"){
+        if(this.type === "bullet") {
             ctx.fillStyle = "yellow";
             ctx.beginPath();
-            ctx.arc(0,0,this.size,0,Math.PI*2);
+            ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.fill();
         }
-        else if(this.type === "banana"){
+        else if(this.type === "banana") {
             ctx.fillStyle = "gold";
             ctx.beginPath();
-            ctx.arc(0,0,12,0.3,2.7);
+            ctx.arc(0, 0, 12, 0.3, 2.7);
             ctx.lineWidth = 6;
             ctx.strokeStyle = "gold";
             ctx.stroke();
         }
-        else if(this.type === "pizza"){
+        else if(this.type === "pizza") {
             ctx.fillStyle = "orange";
             ctx.beginPath();
-            ctx.moveTo(-14,-12);
-            ctx.lineTo(14,0);
-            ctx.lineTo(-14,12);
+            ctx.moveTo(-14, -12);
+            ctx.lineTo(14, 0);
+            ctx.lineTo(-14, 12);
             ctx.closePath();
             ctx.fill();
 
             ctx.fillStyle = "red";
             ctx.beginPath();
-            ctx.arc(-4,-2,2,0,Math.PI*2);
-            ctx.arc(-2,5,2,0,Math.PI*2);
-            ctx.arc(2,0,2,0,Math.PI*2);
+            ctx.arc(-4, -2, 2, 0, Math.PI * 2);
+            ctx.arc(-2, 5, 2, 0, Math.PI * 2);
+            ctx.arc(2, 0, 2, 0, Math.PI * 2);
             ctx.fill();
         }
-        else if(this.type === "feather"){
+        else if(this.type === "feather") {
             ctx.fillStyle = "lime";
             ctx.beginPath();
-            ctx.ellipse(0,0,5,14,0,0,Math.PI*2);
+            ctx.ellipse(0, 0, 5, 14, 0, 0, Math.PI * 2);
             ctx.fill();
 
             ctx.strokeStyle = "cyan";
             ctx.beginPath();
-            ctx.moveTo(0,-10);
-            ctx.lineTo(0,10);
+            ctx.moveTo(0, -10);
+            ctx.lineTo(0, 10);
             ctx.stroke();
         }
-        else if(this.type === "bubble"){
+        else if(this.type === "bubble") {
             ctx.fillStyle = "rgba(120,220,255,0.5)";
             ctx.strokeStyle = "skyblue";
             ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(0,0,this.size,0,Math.PI*2);
+            ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
         }
-        else if(this.type === "arrow"){
+        else if(this.type === "arrow") {
             ctx.fillStyle = "cyan";
             ctx.beginPath();
-            ctx.moveTo(12,0);
-            ctx.lineTo(-10,-5);
-            ctx.lineTo(-10,5);
+            ctx.moveTo(12, 0);
+            ctx.lineTo(-10, -5);
+            ctx.lineTo(-10, 5);
             ctx.closePath();
             ctx.fill();
         }
@@ -499,24 +431,24 @@ class Projectile{
     }
 }
 
-class DamageText{
-    constructor(x,y,text,color){
-        this.x=x;
-        this.y=y;
-        this.text=text;
-        this.color=color;
-        this.life=50;
+class DamageText {
+    constructor(x, y, text, color) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color;
+        this.life = 50;
     }
 
-    update(){
+    update() {
         this.y -= 1;
         this.life--;
     }
 
-    draw(){
+    draw() {
         ctx.fillStyle = this.color;
         ctx.font = "18px Arial";
-        ctx.fillText(this.text,this.x,this.y);
+        ctx.fillText(this.text, this.x, this.y);
     }
 }
 
@@ -541,8 +473,32 @@ class LightningArc {
 }
 let arcs = [];
 
-function damageEnemy(enemy,damage,dx,dy,sourceType){
-    if(enemy.frozenTimer > 0 && sourceType !== "darkEnergy") {
+// FEATURE: Added Flame Trail Particle Class
+class FlameParticle {
+    constructor(x, y, damage) {
+        this.x = x + (Math.random() * 12 - 6);
+        this.y = y + (Math.random() * 12 - 6);
+        this.r = Math.random() * 8 + 6;
+        this.maxLife = Math.random() * 20 + 30; // ~0.5 to 0.8 seconds life
+        this.life = this.maxLife;
+        this.damage = damage;
+        this.hue = Math.random() * 25 + 10; // Orange/Red flame colors
+    }
+    update() {
+        this.life--;
+        this.r *= 0.96; // Shrink away
+    }
+    draw() {
+        let alpha = this.life / this.maxLife;
+        ctx.fillStyle = `hsla(${this.hue}, 100%, 50%, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function damageEnemy(enemy, damage, dx, dy, sourceType) {
+    if(enemy.frozenTimer > 0 && sourceType !== "darkEnergy" && sourceType !== "flame") {
         if(Math.random() < 0.20) { 
             damage *= 1.8;
             damageTexts.push(new DamageText(enemy.x, enemy.y - 40, "SHATTER!", "#00e5ff"));
@@ -550,9 +506,9 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
     }
 
     enemy.hp -= damage; 
-    enemy.flash = 4;
+    enemy.flash = sourceType === "flame" ? 2 : 4; // Lower flash for DoT ticks
 
-    if(sourceType !== "guard" && sourceType !== "darkEnergy" && enemy.frozenTimer <= 0) {
+    if(sourceType !== "guard" && sourceType !== "darkEnergy" && sourceType !== "flame" && enemy.frozenTimer <= 0) {
         enemy.x += dx * 6;
         enemy.y += dy * 6;
     }
@@ -570,23 +526,24 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
     if (displayDamage > 0) {
         damageTexts.push(
             new DamageText(
-                enemy.x + (Math.random()*20-10),
+                enemy.x + (Math.random() * 20 - 10),
                 enemy.y - 20,
                 "-" + displayDamage,
-                "white"
+                sourceType === "flame" ? "#ff7700" : "white"
             )
         );
     }
 
-    if (enemy.hp <= 0 && abilities.vampiric) {
-        player.vampireKills++;
-        
-        if (player.vampireKills >= abilities.vampiric.killsNeeded) {
-            player.vampireKills = 0; 
-            let healAmt = Math.min(1, 100 - player.hp);
-            if (healAmt > 0) {
-                player.hp += healAmt;
-                damageTexts.push(new DamageText(player.x, player.y - 25, "+1 HP", "#4eff47"));
+    if (enemy.hp <= 0) {
+        if (abilities.vampiric) {
+            player.vampireKills++;
+            if (player.vampireKills >= abilities.vampiric.killsNeeded) {
+                player.vampireKills = 0; 
+                let healAmt = Math.min(1, 100 - player.hp);
+                if (healAmt > 0) {
+                    player.hp += healAmt;
+                    damageTexts.push(new DamageText(player.x, player.y - 25, "+1 HP", "#4eff47"));
+                }
             }
         }
     }
@@ -601,7 +558,7 @@ function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
         let closestDist = 160; 
 
         enemies.forEach(e => {
-            if(!bouncedTargets.includes(e)) {
+            if(!bouncedTargets.includes(e) && e.hp > 0) {
                 let d = Math.hypot(e.x - currentSource.x, e.y - currentSource.y);
                 if(d < closestDist) {
                     closestDist = d;
@@ -612,10 +569,7 @@ function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
 
         if(closestNext) {
             arcs.push(new LightningArc(currentSource.x, currentSource.y, closestNext.x, closestNext.y));
-            closestNext.hp -= chainDmg;
-            closestNext.flash = 4;
-            damageTexts.push(new DamageText(closestNext.x, closestNext.y - 20, "-" + Math.max(1, Math.floor(chainDmg)), "#00ffff"));
-            
+            damageEnemy(closestNext, chainDmg, 0, 0, "chainLightning");
             bouncedTargets.push(closestNext);
             currentSource = closestNext;
         } else {
@@ -626,11 +580,11 @@ function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
     enemies.forEach(e => e.hasChained = false);
 }
 
-function spawnWave(){
+function spawnWave() {
     enemies = [];
-    let amount = 5 + round*3;
+    let amount = 5 + round * 3;
 
-    for(let i=0;i<amount;i++){
+    for(let i = 0; i < amount; i++) {
         enemies.push(new Enemy());
     }
     updateUI();
@@ -642,193 +596,226 @@ function spawnGuard() {
     }
 }
 
+// FEATURE: Deploy manual target decoy clone
+function spawnDecoy() {
+    activeDecoy = {
+        x: player.x,
+        y: player.y,
+        r: player.r,
+        life: abilities.decoy.duration
+    };
+    decoyCooldownTimer = abilities.decoy.cooldown;
+}
+
 spawnWave();
 
-function nearestEnemy(x,y){
+function nearestEnemy(x, y) {
     let closest = null;
     let best = Infinity;
 
-    enemies.forEach(e=>{
-        let d = Math.hypot(e.x-x,e.y-y);
-        if(d < best){
-            best = d;
-            closest = e;
+    enemies.forEach(e => {
+        if (e.hp > 0) {
+            let d = Math.hypot(e.x - x, e.y - y);
+            if(d < best) {
+                best = d;
+                closest = e;
+            }
         }
     });
     return closest;
 }
 
-// Dynamically managed loop for automatic firing to support Dev panel adjustments
-function startShootingClock() {
-    if (bulletIntervalId) clearInterval(bulletIntervalId);
-    
-    bulletIntervalId = setInterval(()=>{
-        if(paused) return;
-
-        let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
-        player.bullets.push(
-            new Projectile(
-                player.x,
-                player.y,
-                Math.cos(angle)*9,
-                Math.sin(angle)*9,
-                5,
-                "yellow",
-                player.damage,
-                "bullet"
-            )
-        );
-    }, player.fireRate);
-}
-startShootingClock();
-
-// SPEED ARROWS
-setInterval(()=>{
-    if(paused || !abilities.speedArrows) return;
-
-    let mx = 0; let my = 0;
-    if(keys["w"]) my -= 1;
-    if(keys["s"]) my += 1;
-    if(keys["a"]) mx -= 1;
-    if(keys["d"]) mx += 1;
-    if(mx===0 && my===0) return;
-
-    let angle = Math.atan2(my,mx);
-
-    for(let i=0;i<abilities.speedArrows.count;i++){
-        let spread = (i-(abilities.speedArrows.count-1)/2)*0.25;
-        player.bullets.push(
-            new Projectile(
-                player.x,
-                player.y,
-                Math.cos(angle+spread)*12,
-                Math.sin(angle+spread)*12,
-                6,
-                "cyan",
-                12,
-                "arrow"
-            )
-        );
-    }
-},500);
-
-// BUBBLES
-setInterval(()=>{
-    if(paused || !abilities.bubbles) return;
-
-    for(let i=0;i<abilities.bubbles.level;i++){
-        player.bullets.push(
-            new Projectile(
-                player.x,
-                player.y,
-                (Math.random()-0.5)*4,
-                -3-Math.random()*2,
-                12+abilities.bubbles.level*2,
-                "skyblue",
-                18,
-                "bubble"
-            )
-        );
-    }
-},1200);
-
-// FEATHERS
-setInterval(()=>{
-    if(paused || !abilities.feathers) return;
-
-    let target = nearestEnemy(player.x,player.y);
-    if(!target) return;
-
-    let angle = Math.atan2(target.y-player.y,target.x-player.x);
-
-    for(let i=0;i<abilities.feathers.level;i++){
-        let spread = (Math.random()-0.5)*0.4;
-        player.bullets.push(
-            new Projectile(
-                player.x,
-                player.y,
-                Math.cos(angle+spread)*10,
-                Math.sin(angle+spread)*10,
-                7,
-                "lime",
-                18,
-                "feather"
-            )
-        );
-    }
-},700);
-
-// BANANAS
-setInterval(()=>{
-    if(paused || !abilities.bananas) return;
-
-    let target = nearestEnemy(player.x,player.y);
-    if(!target) return;
-
-    let angle = Math.atan2(target.y-player.y,target.x-player.x);
-
-    let banana = new Projectile(
-        player.x,
-        player.y,
-        Math.cos(angle)*7,
-        Math.sin(angle)*7,
-        12,
-        "gold",
-        26,
-        "banana"
-    );
-    banana.curve = 0.08;
-    player.bullets.push(banana);
-},1400);
-
-// PIZZA
-setInterval(()=>{
-    if(paused || !abilities.pizza) return;
-
-    let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
-
-    let pizza = new Projectile(
-        player.x,
-        player.y,
-        Math.cos(angle)*8,
-        Math.sin(angle)*8,
-        15,
-        "orange",
-        35,
-        "pizza"
-    );
-    pizza.returning = false;
-    player.bullets.push(pizza);
-},2000);
+// ATTACK TIMERS
+let lastMainShot = 0;
+let lastArrowShot = 0;
+let lastBubbleShot = 0;
+let lastFeatherShot = 0;
+let lastBananaShot = 0;
+let lastPizzaShot = 0;
+let lastFrostNova = 0;
+let lastSingularity = 0;
 
 let frostNovaRadius = 0;
 let frostNovaActive = false;
-setInterval(() => {
-    if(paused || !abilities.frostNova) return;
-    frostNovaActive = true;
-    frostNovaRadius = 0;
-}, 7000);
 
-setInterval(() => {
-    if(paused || !abilities.singularity) return;
-    singularities.push({
-        x: mouse.x,
-        y: mouse.y,
-        radius: abilities.singularity.radius,
-        life: 120 
-    });
-}, 8000);
+function handleWeaponCooldowns(timestamp) {
+    if (paused) return;
 
-function update(){
+    // FEATURE: Dynamic scaling values based on Adrenaline Rush parameters
+    let currentFireRate = player.fireRate;
+    if (abilities.adrenaline) {
+        let missingHpPercent = (100 - player.hp) / 100; // 0 to 1 scaling range
+        let rateBoost = 1 - (missingHpPercent * abilities.adrenaline.intensity); 
+        currentFireRate = player.fireRate * rateBoost;
+    }
+
+    // Primary weapon execution pass using calculated operational dynamic constraints
+    if (timestamp - lastMainShot >= currentFireRate) {
+        let angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+        player.bullets.push(
+            new Projectile(
+                player.x, player.y,
+                Math.cos(angle) * 9, Math.sin(angle) * 9,
+                5, "yellow", player.damage, "bullet"
+            )
+        );
+        lastMainShot = timestamp;
+    }
+
+    // Speed arrows
+    if (abilities.speedArrows && timestamp - lastArrowShot >= 500) {
+        let mx = 0, my = 0;
+        if(keys["w"]) my -= 1;
+        if(keys["s"]) my += 1;
+        if(keys["a"]) mx -= 1;
+        if(keys["d"]) mx += 1;
+        
+        if(!(mx === 0 && my === 0)) {
+            let angle = Math.atan2(my, mx);
+            for(let i = 0; i < abilities.speedArrows.count; i++) {
+                let spread = (i - (abilities.speedArrows.count - 1) / 2) * 0.25;
+                player.bullets.push(
+                    new Projectile(
+                        player.x, player.y,
+                        Math.cos(angle + spread) * 12, Math.sin(angle + spread) * 12,
+                        6, "cyan", 12, "arrow"
+                    )
+                );
+            }
+            lastArrowShot = timestamp;
+        }
+    }
+
+    // Bubbles
+    if (abilities.bubbles && timestamp - lastBubbleShot >= 1200) {
+        for(let i = 0; i < abilities.bubbles.level; i++) {
+            player.bullets.push(
+                new Projectile(
+                    player.x, player.y,
+                    (Math.random() - 0.5) * 4, -3 - Math.random() * 2,
+                    12 + abilities.bubbles.level * 2, "skyblue", 18, "bubble"
+                )
+            );
+        }
+        lastBubbleShot = timestamp;
+    }
+
+    // Feathers
+    if (abilities.feathers && timestamp - lastFeatherShot >= 700) {
+        let target = nearestEnemy(player.x, player.y);
+        if(target) {
+            let angle = Math.atan2(target.y - player.y, target.x - player.x);
+            for(let i = 0; i < abilities.feathers.level; i++) {
+                let spread = (Math.random() - 0.5) * 0.4;
+                player.bullets.push(
+                    new Projectile(
+                        player.x, player.y,
+                        Math.cos(angle + spread) * 10, Math.sin(angle + spread) * 10,
+                        7, "lime", 18, "feather"
+                    )
+                );
+            }
+            lastFeatherShot = timestamp;
+        }
+    }
+
+    // Bananas
+    if (abilities.bananas && timestamp - lastBananaShot >= 1400) {
+        let target = nearestEnemy(player.x, player.y);
+        if(target) {
+            let angle = Math.atan2(target.y - player.y, target.x - player.x);
+            let banana = new Projectile(
+                player.x, player.y,
+                Math.cos(angle) * 7, Math.sin(angle) * 7,
+                12, "gold", 26, "banana"
+            );
+            banana.curve = 0.08;
+            player.bullets.push(banana);
+            lastBananaShot = timestamp;
+        }
+    }
+
+    // Pizza
+    if (abilities.pizza && timestamp - lastPizzaShot >= 2000) {
+        let angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+        let pizza = new Projectile(
+            player.x, player.y,
+            Math.cos(angle) * 8, Math.sin(angle) * 8,
+            15, "orange", 35, "pizza"
+        );
+        pizza.returning = false;
+        player.bullets.push(pizza);
+        lastPizzaShot = timestamp;
+    }
+
+    // Frost Nova activation
+    if (abilities.frostNova && timestamp - lastFrostNova >= 7000) {
+        frostNovaActive = true;
+        frostNovaRadius = 0;
+        lastFrostNova = timestamp;
+    }
+
+    // Singularity activation
+    if (abilities.singularity && timestamp - lastSingularity >= 8000) {
+        singularities.push({
+            x: mouse.x,
+            y: mouse.y,
+            radius: abilities.singularity.radius,
+            life: 120 
+        });
+        lastSingularity = timestamp;
+    }
+}
+
+function update() {
     if(paused) return;
 
-    if(keys["w"]) player.y -= player.speed;
-    if(keys["s"]) player.y += player.speed;
-    if(keys["a"]) player.x -= player.speed;
-    if(keys["d"]) player.x += player.speed;
+    // FEATURE: Scale player tactical speed parameters dynamically if Adrenaline Rush is learned
+    let calculatedSpeed = player.speed;
+    if (abilities.adrenaline) {
+        let hpDeficitRatio = (100 - player.hp) / 100;
+        calculatedSpeed = player.speed * (1 + (hpDeficitRatio * abilities.adrenaline.speedMultiplier));
+    }
 
-    player.x = Math.max(player.r,Math.min(canvas.width-player.r,player.x));
-    player.y = Math.max(player.r,Math.min(canvas.height-player.r,player.y));
+    let isMoving = false;
+    if(keys["w"]) { player.y -= calculatedSpeed; isMoving = true; }
+    if(keys["s"]) { player.y += calculatedSpeed; isMoving = true; }
+    if(keys["a"]) { player.x -= calculatedSpeed; isMoving = true; }
+    if(keys["d"]) { player.x += calculatedSpeed; isMoving = true; }
+
+    player.x = Math.max(player.r, Math.min(canvas.width - player.r, player.x));
+    player.y = Math.max(player.r, Math.min(canvas.height - player.r, player.y));
+
+    // FEATURE: Check Movement Engine state to deposit Fire Trail nodes
+    if (abilities.dragonsBreath && isMoving && Math.random() < 0.45) {
+        flames.push(new FlameParticle(player.x, player.y, abilities.dragonsBreath.damage));
+    }
+
+    // FEATURE: Maintain Fire Trail lifecycle parameters and damage ticking loops
+    for (let i = flames.length - 1; i >= 0; i--) {
+        let f = flames[i];
+        f.update();
+        
+        // Damage enemies overlapping with flames
+        enemies.forEach(e => {
+            if (Math.hypot(e.x - f.x, e.y - f.y) < f.r + e.r) {
+                damageEnemy(e, f.damage, 0, 0, "flame");
+            }
+        });
+
+        if (f.life <= 0) flames.splice(i, 1);
+    }
+
+    // FEATURE: Manage Decoy timer parameters
+    if (activeDecoy) {
+        activeDecoy.life--;
+        if (activeDecoy.life <= 0) {
+            activeDecoy = null;
+        }
+    }
+    if (decoyCooldownTimer > 0) {
+        decoyCooldownTimer--;
+    }
 
     if(frostNovaActive && abilities.frostNova) {
         frostNovaRadius += 9;
@@ -844,21 +831,18 @@ function update(){
         }
     }
 
-    singularities.forEach((s, idx) => {
-        s.life--;
-        if(s.life <= 0) singularities.splice(idx, 1);
-    });
+    for (let i = singularities.length - 1; i >= 0; i--) {
+        singularities[i].life--;
+        if(singularities[i].life <= 0) singularities.splice(i, 1);
+    }
 
     if(abilities.darkEnergy){
-        enemies.forEach((e,ei)=>{
-            let dist = Math.hypot(player.x-e.x,player.y-e.y);
-
+        enemies.forEach((e)=>{
+            let dist = Math.hypot(player.x - e.x, player.y - e.y);
             if(dist < abilities.darkEnergy.radius){
                 e.speed = e.baseSpeed * 0.5;
-
-                let dx = (e.x-player.x)/dist;
-                let dy = (e.y-player.y)/dist;
-
+                let dx = (e.x - player.x) / dist;
+                let dy = (e.y - player.y) / dist;
                 damageEnemy(e, abilities.darkEnergy.damage, dx, dy, "darkEnergy");
             }
         });
@@ -866,7 +850,8 @@ function update(){
 
     guards.forEach(g => g.update());
 
-    player.bullets.forEach((b,bi)=>{
+    for (let bi = player.bullets.length - 1; bi >= 0; bi--) {
+        let b = player.bullets[bi];
         b.update();
 
         if(b.curve){
@@ -880,43 +865,49 @@ function update(){
             if(b.returning){
                 let dx = player.x - b.x;
                 let dy = player.y - b.y;
-                let dist = Math.hypot(dx,dy);
+                let dist = Math.hypot(dx, dy);
 
-                b.dx += dx/dist * 0.3;
-                b.dy += dy/dist * 0.3;
-            }
-        }
-
-        enemies.forEach((e,ei)=>{
-            let dist = Math.hypot(b.x-e.x,b.y-e.y);
-
-            if(dist < b.size + e.r){
-                let dx = (e.x-b.x)/dist;
-                let dy = (e.y-b.y)/dist;
-
-                damageEnemy(e,b.damage,dx,dy,"bullet");
-
-                if(b.type !== "pizza"){
-                    player.bullets.splice(bi,1);
+                if (dist > 0) {
+                    b.dx += (dx / dist) * 0.3;
+                    b.dy += (dy / dist) * 0.3;
                 }
             }
-        });
-
-        if(b.life <= 0){
-            player.bullets.splice(bi,1);
         }
-    });
+
+        let bulletRemoved = false;
+        for (let ei = 0; ei < enemies.length; ei++) {
+            let e = enemies[ei];
+            let dist = Math.hypot(b.x - e.x, b.y - e.y);
+
+            if(dist < b.size + e.r){
+                let dx = (e.x - b.x) / dist;
+                let dy = (e.y - b.y) / dist;
+
+                damageEnemy(e, b.damage, dx, dy, "bullet");
+
+                if(b.type !== "pizza"){
+                    player.bullets.splice(bi, 1);
+                    bulletRemoved = true;
+                    break;
+                }
+            }
+        }
+
+        if(!bulletRemoved && b.life <= 0){
+            player.bullets.splice(bi, 1);
+        }
+    }
 
     enemies = enemies.filter(e => e.hp > 0);
 
-    damageTexts.forEach((d,i)=>{
-        d.update();
-        if(d.life <= 0){
-            damageTexts.splice(i,1);
+    for (let i = damageTexts.length - 1; i >= 0; i--) {
+        damageTexts[i].update();
+        if(damageTexts[i].life <= 0){
+            damageTexts.splice(i, 1);
         }
-    });
+    }
 
-    enemies.forEach(e=>e.update());
+    enemies.forEach(e => e.update());
 
     if(enemies.length === 0){
         paused = true;
@@ -931,8 +922,11 @@ function update(){
     updateUI();
 }
 
-function draw(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // FEATURE: Draw Flame Trail elements
+    flames.forEach(f => f.draw());
 
     singularities.forEach(s => {
         let grad = ctx.createRadialGradient(s.x, s.y, 5, s.x, s.y, s.radius);
@@ -941,26 +935,21 @@ function draw(){
         grad.addColorStop(1, "rgba(130,0,255,0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(s.x, s.y, s.radius, 0, Math.PI*2);
+        ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
         ctx.fill();
     });
 
     if(abilities.darkEnergy){
         let g = ctx.createRadialGradient(
-            player.x,
-            player.y,
-            10,
-            player.x,
-            player.y,
-            abilities.darkEnergy.radius
+            player.x, player.y, 10,
+            player.x, player.y, abilities.darkEnergy.radius
         );
-
-        g.addColorStop(0,"rgba(150,0,255,0.45)");
-        g.addColorStop(1,"rgba(150,0,255,0)");
+        g.addColorStop(0, "rgba(150,0,255,0.45)");
+        g.addColorStop(1, "rgba(150,0,255,0)");
 
         ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(player.x, player.y, abilities.darkEnergy.radius, 0, Math.PI*2);
+        ctx.arc(player.x, player.y, abilities.darkEnergy.radius, 0, Math.PI * 2);
         ctx.fill();
     }
 
@@ -968,42 +957,69 @@ function draw(){
         ctx.strokeStyle = "rgba(130, 235, 255, 0.3)";
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(player.x, player.y, frostNovaRadius, 0, Math.PI*2);
+        ctx.arc(player.x, player.y, frostNovaRadius, 0, Math.PI * 2);
         ctx.stroke();
     }
 
+    // FEATURE: Draw active Decoy Clone
+    if (activeDecoy) {
+        ctx.save();
+        ctx.fillStyle = "rgba(180, 0, 255, 0.35)";
+        ctx.strokeStyle = "rgba(220, 100, 255, 0.8)";
+        ctx.lineWidth = 3;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "#cc00ff";
+        ctx.beginPath();
+        ctx.arc(activeDecoy.x, activeDecoy.y, activeDecoy.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Draw Real Player
     ctx.fillStyle = "#4de1ff";
     ctx.beginPath();
-    ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.strokeStyle = "white";
     ctx.lineWidth = 5;
     ctx.beginPath();
-    ctx.moveTo(player.x,player.y);
-    ctx.lineTo(mouse.x,mouse.y);
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(mouse.x, mouse.y);
     ctx.stroke();
 
-    player.bullets.forEach(b=>b.draw());
+    player.bullets.forEach(b => b.draw());
     guards.forEach(g => g.draw());
-    enemies.forEach(e=>e.draw());
-    damageTexts.forEach(d=>d.draw());
+    enemies.forEach(e => e.draw());
+    damageTexts.forEach(d => d.draw());
 
-    arcs.forEach((arc, index) => {
-        arc.draw();
-        if(arc.life <= 0) arcs.splice(index, 1);
-    });
+    for (let i = arcs.length - 1; i >= 0; i--) {
+        arcs[i].draw();
+        if(arcs[i].life <= 0) arcs.splice(i, 1);
+    }
 }
 
-function loop(){
+function loop(timestamp) {
+    handleWeaponCooldowns(timestamp);
     update();
     draw();
     requestAnimationFrame(loop);
 }
 
-loop();
+requestAnimationFrame((timestamp) => {
+    lastMainShot = timestamp;
+    lastArrowShot = timestamp;
+    lastBubbleShot = timestamp;
+    lastFeatherShot = timestamp;
+    lastBananaShot = timestamp;
+    lastPizzaShot = timestamp;
+    lastFrostNova = timestamp;
+    lastSingularity = timestamp;
+    loop(timestamp);
+});
 
-function updateUI(){
+function updateUI() {
     document.getElementById("hp").textContent = Math.max(0, Math.floor(player.hp));
     document.getElementById("round").textContent = round;
     document.getElementById("left").textContent = enemies.length;
@@ -1011,9 +1027,19 @@ function updateUI(){
     
     document.getElementById("guardCount").textContent = guards.length;
     document.getElementById("maxGuards").textContent = abilities.guards ? abilities.guards.max : 0;
+
+    // Update UI tracking state for active manual systems
+    let decoyUi = document.getElementById("decoyCd");
+    if (!abilities.decoy) {
+        decoyUi.textContent = "Locked";
+    } else if (decoyCooldownTimer > 0) {
+        decoyUi.textContent = Math.ceil(decoyCooldownTimer / 60) + "s";
+    } else {
+        decoyUi.textContent = "Ready [E]";
+    }
 }
 
-function showUpgrades(){
+function showUpgrades() {
     const menu = document.getElementById("upgradeMenu");
     const choices = document.getElementById("choices");
 
@@ -1023,7 +1049,7 @@ function showUpgrades(){
     const upgrades = [
         {
             name:"⚡ Faster Shooting",
-            effect:()=>{ player.fireRate = Math.max(100,player.fireRate-40); startShootingClock(); }
+            effect:()=>{ player.baseFireRate = Math.max(100, player.baseFireRate - 40); player.fireRate = player.baseFireRate; }
         },
         {
             name:"💥 More Damage",
@@ -1031,7 +1057,7 @@ function showUpgrades(){
         },
         {
             name:"👟 More Speed",
-            effect:()=>{ player.speed += 0.6; }
+            effect:()=>{ player.baseSpeed += 0.6; player.speed = player.baseSpeed; }
         },
         {
             name:"❤️ Heal",
@@ -1041,7 +1067,7 @@ function showUpgrades(){
             name:"🏹 Speeding Arrows",
             effect:()=>{
                 if(!abilities.speedArrows){ abilities.speedArrows = {count:1}; } 
-                else { abilities.speedArrows.count = Math.min(5,abilities.speedArrows.count+1); }
+                else { abilities.speedArrows.count = Math.min(5, abilities.speedArrows.count + 1); }
             }
         },
         {
@@ -1123,19 +1149,41 @@ function showUpgrades(){
                 if(!abilities.singularity){ abilities.singularity = { radius: 110 }; } 
                 else { abilities.singularity.radius += 30; }
             }
+        },
+        // NEW POWERUPS PRESENTATION PASSTHROUGH 
+        {
+            name:"🛸 Decoy Holo [E]",
+            effect:()=>{
+                if(!abilities.decoy){ abilities.decoy = { duration: 240, cooldown: 600 }; } // 4s length, 10s cool down
+                else { abilities.decoy.duration += 60; abilities.decoy.cooldown = Math.max(300, abilities.decoy.cooldown - 60); }
+            }
+        },
+        {
+            name:"🔥 Dragon's Breath",
+            effect:()=>{
+                if(!abilities.dragonsBreath){ abilities.dragonsBreath = { damage: 0.35 }; }
+                else { abilities.dragonsBreath.damage += 0.25; }
+            }
+        },
+        {
+            name:"💥 Adrenaline Rush",
+            effect:()=>{
+                if(!abilities.adrenaline){ abilities.adrenaline = { intensity: 0.5, speedMultiplier: 0.5 }; } // Boosts fire and speed at low health
+                else { abilities.adrenaline.intensity = Math.min(0.85, abilities.adrenaline.intensity + 0.1); abilities.adrenaline.speedMultiplier += 0.2; }
+            }
         }
     ];
 
-    upgrades.sort(()=>Math.random()-0.5);
+    upgrades.sort(() => Math.random() - 0.5);
 
-    for(let i=0;i<3;i++){
+    for(let i = 0; i < 3; i++){
         const up = upgrades[i];
         const div = document.createElement("div");
 
         div.className = "upgradeBtn";
         div.innerHTML = up.name;
 
-        div.onclick = ()=>{
+        div.onclick = () => {
             up.effect();
             menu.style.display = "none";
             round++;
