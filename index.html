@@ -10,9 +10,8 @@ body{
     margin:0;
     overflow:hidden;
     background:#111;
-    font-family:Arial, sans-serif;
+    font-family:Arial;
     color:white;
-    user-select: none;
 }
 
 canvas{
@@ -27,57 +26,48 @@ canvas{
     z-index:10;
     font-size:20px;
     line-height:1.5;
-    background: rgba(0, 0, 0, 0.5);
-    padding: 10px;
-    border-radius: 8px;
+    pointer-events: none;
 }
 
-#hotbar {
+/* SECRET DEVELOPER PANEL STYLE */
+#devPanel {
     position: absolute;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 15px;
-    z-index: 10;
-    background: rgba(0, 0, 0, 0.6);
-    padding: 12px;
-    border-radius: 16px;
-    border: 2px solid #444;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.75);
+    border: 2px dashed #ff0055;
+    border-radius: 10px;
+    padding: 15px;
+    z-index: 100;
+    display: none; /* Hidden by default */
+    width: 220px;
 }
 
-.hotbarBtn {
-    padding: 10px 16px;
+#devPanel h3 {
+    margin: 0 0 10px 0;
     font-size: 16px;
-    font-weight: bold;
-    border: none;
-    border-radius: 8px;
+    color: #ff0055;
+    text-align: center;
+    letter-spacing: 1px;
+}
+
+.devBtn {
+    width: 100%;
+    background: #222;
+    color: #00ffaa;
+    border: 1px solid #444;
+    padding: 8px;
+    margin: 4px 0;
+    border-radius: 5px;
     cursor: pointer;
-    color: white;
-    transition: background 0.2s, transform 0.1s;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 110px;
+    font-size: 13px;
+    text-align: left;
+    transition: 0.2s;
 }
 
-.hotbarBtn:active {
-    transform: scale(0.95);
-}
-
-#btn-teleport { background: #8a2be2; }
-#btn-teleport:hover { background: #9b42ef; }
-
-#btn-smoke { background: #555555; }
-#btn-smoke:hover { background: #6d6d6d; }
-
-#btn-decoy { background: #008080; }
-#btn-decoy:hover { background: #00a3a3; }
-
-.cooldown-text {
-    font-size: 12px;
-    margin-top: 4px;
-    opacity: 0.8;
+.devBtn:hover {
+    background: #333;
+    border-color: #00ffaa;
 }
 
 #upgradeMenu{
@@ -117,23 +107,14 @@ canvas{
     text-align:center;
     display:none;
     z-index:30;
-    background: rgba(0,0,0,0.8);
-    padding: 30px;
-    border-radius: 20px;
-    border: 3px solid red;
 }
 
-button.restartBtn{
+button{
     padding:10px 20px;
     font-size:20px;
     border:none;
     border-radius:10px;
     cursor:pointer;
-    background: red;
-    color: white;
-}
-button.restartBtn:hover {
-    background: #ff3333;
 }
 </style>
 </head>
@@ -141,26 +122,20 @@ button.restartBtn:hover {
 <body>
 
 <div id="ui">
-❤️ HP: <span id="hp">100</span> / 100<br>
+❤️ HP: <span id="hp">100</span> / 100 <span id="godModeStatus" style="color:#ff0055; font-weight:bold;"></span><br>
 ⚔️ Round: <span id="round">1</span><br>
 👾 Enemies: <span id="left">0</span><br>
 ⭐ Level: <span id="level">1</span><br>
 🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span>
 </div>
 
-<div id="hotbar">
-    <button id="btn-teleport" class="hotbarBtn" onclick="triggerTeleport()">
-        <span>🌀 Teleport</span>
-        <span id="cd-teleport" class="cooldown-text">(1) Ready</span>
-    </button>
-    <button id="btn-smoke" class="hotbarBtn" onclick="triggerInvisibilityZone()">
-        <span>🌫️ Smoke</span>
-        <span id="cd-smoke" class="cooldown-text">(2) Ready</span>
-    </button>
-    <button id="btn-decoy" class="hotbarBtn" onclick="triggerDecoy()">
-        <span>👥 Decoy</span>
-        <span id="cd-decoy" class="cooldown-text">(3) Ready</span>
-    </button>
+<div id="devPanel">
+    <h3>🛠️ DEV CHEATS (~ Key)</h3>
+    <button class="devBtn" onclick="devKillAll()">💥 Insta-Kill All</button>
+    <button class="devBtn" onclick="devHeal()">❤️ Heal to Full</button>
+    <button class="devBtn" onclick="devSpawnGuards()">🛡️ Max Guard Cap + Spawn</button>
+    <button class="devBtn" onclick="devToggleGodMode()">😇 Toggle God Mode</button>
+    <button class="devBtn" onclick="devSuperSpeed()">⚡ Super Speed Mode</button>
 </div>
 
 <div id="upgradeMenu">
@@ -170,7 +145,7 @@ button.restartBtn:hover {
 
 <div id="gameOver">
 <h1>GAME OVER</h1>
-<button class="restartBtn" onclick="location.reload()">Restart</button>
+<button onclick="location.reload()">Restart</button>
 </div>
 
 <canvas id="game"></canvas>
@@ -182,31 +157,25 @@ const ctx = canvas.getContext("2d");
 canvas.width = innerWidth;
 canvas.height = innerHeight;
 
-window.addEventListener("resize", () => {
-    canvas.width = innerWidth;
-    canvas.height = innerHeight;
-});
-
 const keys = {};
 const mouse = {x:0,y:0};
 
-// Cooldown Management state tracking (in frames, assuming ~60fps)
-const cooldowns = {
-    teleport: { current: 0, max: 180 }, // 3 seconds
-    smoke: { current: 0, max: 480 },    // 8 seconds
-    decoy: { current: 0, max: 600 }     // 10 seconds
-};
+// Developer state flags
+let isGodMode = false;
+let bulletIntervalId = null;
 
 document.addEventListener("keydown",e=>{
     keys[e.key.toLowerCase()] = true;
     
-    if(paused) return;
-    if(e.key.toLowerCase() === "q" && abilities.guards) {
+    if(e.key.toLowerCase() === "q" && !paused && abilities.guards) {
         spawnGuard();
     }
-    if(e.key === "1") triggerTeleport();
-    if(e.key === "2") triggerInvisibilityZone();
-    if(e.key === "3") triggerDecoy();
+
+    // Secret trigger key: '~' or '`'
+    if(e.key === "`" || e.key === "~") {
+        const panel = document.getElementById("devPanel");
+        panel.style.display = panel.style.display === "block" ? "none" : "block";
+    }
 });
 
 document.addEventListener("keyup",e=>{
@@ -250,21 +219,57 @@ let guards = [];
 let particles = [];
 let damageTexts = [];
 let singularities = []; 
-let smokeZones = [];
-let decoys = [];
 let round = 1;
 let paused = false;
 
+/* ==========================================================================
+   DEVELOPER CHEAT FUNCTIONS
+   ========================================================================== */
+function devKillAll() {
+    if(paused && enemies.length === 0) return;
+    enemies.forEach(e => {
+        e.hp = 0;
+        damageTexts.push(new DamageText(e.x, e.y, "DEV SMITE!", "#ff0055"));
+    });
+}
+
+function devHeal() {
+    player.hp = 100;
+    damageTexts.push(new DamageText(player.x, player.y - 25, "MAX HEALED", "#00ffaa"));
+}
+
+function devSpawnGuards() {
+    if(!abilities.guards) {
+        abilities.guards = { max: 5 };
+    } else {
+        abilities.guards.max += 5;
+    }
+    for(let i=0; i<5; i++) {
+        spawnGuard();
+    }
+    damageTexts.push(new DamageText(player.x, player.y + 25, "+5 GUARDS ARRIVED", "#47ff9c"));
+}
+
+function devToggleGodMode() {
+    isGodMode = !isGodMode;
+    const statusText = document.getElementById("godModeStatus");
+    statusText.textContent = isGodMode ? "[GOD MODE]" : "";
+    damageTexts.push(new DamageText(player.x, player.y - 45, isGodMode ? "INVINCIBLE" : "MORTAL", "#ffaa00"));
+}
+
+function devSuperSpeed() {
+    player.speed = 12;
+    player.fireRate = 60;
+    player.damage += 20;
+    startShootingClock(); // Restart the shooting interval with new speed
+    damageTexts.push(new DamageText(player.x, player.y - 25, "HYPER DRIVE", "#00ffff"));
+}
+/* ========================================================================== */
+
 class Enemy{
     constructor(){
-        // Spawn randomly around edges to prevent instant-spawning on top of player
-        if(Math.random() < 0.5) {
-            this.x = Math.random() < 0.5 ? -40 : canvas.width + 40;
-            this.y = Math.random() * canvas.height;
-        } else {
-            this.x = Math.random() * canvas.width;
-            this.y = Math.random() < 0.5 ? -40 : canvas.height + 40;
-        }
+        this.x = Math.random()*canvas.width;
+        this.y = Math.random()*canvas.height;
         this.r = 20;
         this.baseSpeed = 1 + round*0.15; 
         this.speed = this.baseSpeed;
@@ -275,7 +280,6 @@ class Enemy{
     }
 
     update(){
-        // Singularity pull happens BEFORE freeze checks
         singularities.forEach(s => {
             let sDist = Math.hypot(s.x - this.x, s.y - this.y);
             if(sDist < s.radius) {
@@ -292,44 +296,17 @@ class Enemy{
             return; 
         }
 
-        // Target Determination Logic (Decoy > Player)
-        let targetX = player.x;
-        let targetY = player.y;
-        let targetingDecoy = false;
-
-        if (decoys.length > 0) {
-            targetX = decoys[0].x;
-            targetY = decoys[0].y;
-            targetingDecoy = true;
-        }
-
-        let dx = targetX - this.x;
-        let dy = targetY - this.y;
+        let dx = player.x - this.x;
+        let dy = player.y - this.y;
         let dist = Math.hypot(dx,dy);
 
-        // Check if player is hidden inside an active smoke screen zone
-        let playerIsInvisible = false;
-        smokeZones.forEach(zone => {
-            let pZoneDist = Math.hypot(player.x - zone.x, player.y - zone.y);
-            if (pZoneDist < zone.radius) playerIsInvisible = true;
-        });
+        this.x += dx/dist * this.speed;
+        this.y += dy/dist * this.speed;
 
-        if (playerIsInvisible && !targetingDecoy) {
-            // Wander aimlessly inside smoke cover
-            this.x += (Math.random() - 0.5) * this.speed * 1.5;
-            this.y += (Math.random() - 0.5) * this.speed * 1.5;
-        } else {
-            // Standard pursuit movement
-            if (dist > 0) {
-                this.x += (dx/dist) * this.speed;
-                this.y += (dy/dist) * this.speed;
+        if(dist < this.r + player.r){
+            if(!isGodMode) { // God mode check
+                player.hp -= 0.15;
             }
-        }
-
-        // Damage Player (only if tracking the true player, decoys take no mechanical impact)
-        let distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
-        if(distToPlayer < this.r + player.r && !playerIsInvisible){
-            player.hp -= 0.15;
         }
 
         if(this.flash > 0){
@@ -538,7 +515,7 @@ class DamageText{
 
     draw(){
         ctx.fillStyle = this.color;
-        ctx.font = "bold 18px Arial";
+        ctx.font = "18px Arial";
         ctx.fillText(this.text,this.x,this.y);
     }
 }
@@ -563,52 +540,6 @@ class LightningArc {
     }
 }
 let arcs = [];
-
-// ACTIVE SURVIVAL ABILITIES LOGIC
-function triggerTeleport() {
-    if (paused || cooldowns.teleport.current > 0) return;
-    
-    let dx = mouse.x - player.x;
-    let dy = mouse.y - player.y;
-    let dist = Math.hypot(dx, dy);
-    
-    if (dist > 0) {
-        let blinkDist = 200; 
-        player.x = Math.max(player.r, Math.min(canvas.width - player.r, player.x + (dx / dist) * blinkDist));
-        player.y = Math.max(player.r, Math.min(canvas.height - player.r, player.y + (dy / dist) * blinkDist));
-        
-        damageTexts.push(new DamageText(player.x - 20, player.y - 25, "BLINK!", "#00ffff"));
-        cooldowns.teleport.current = cooldowns.teleport.max;
-    }
-}
-
-function triggerInvisibilityZone() {
-    if (paused || cooldowns.smoke.current > 0) return;
-    
-    smokeZones.push({
-        x: player.x,
-        y: player.y,
-        radius: 140,
-        life: 240 // 4 seconds inside
-    });
-    
-    damageTexts.push(new DamageText(player.x - 35, player.y - 25, "SMOKE SCREEN", "#aaaaaa"));
-    cooldowns.smoke.current = cooldowns.smoke.max;
-}
-
-function triggerDecoy() {
-    if (paused || cooldowns.decoy.current > 0) return;
-    
-    decoys.push({
-        x: player.x,
-        y: player.y,
-        r: player.r,
-        life: 240 // 4 seconds decoy lifespan
-    });
-    
-    damageTexts.push(new DamageText(player.x - 25, player.y - 25, "DECOY DEPLOYED", "#00ffaa"));
-    cooldowns.decoy.current = cooldowns.decoy.max;
-}
 
 function damageEnemy(enemy,damage,dx,dy,sourceType){
     if(enemy.frozenTimer > 0 && sourceType !== "darkEnergy") {
@@ -727,23 +658,29 @@ function nearestEnemy(x,y){
     return closest;
 }
 
-setInterval(()=>{
-    if(paused) return;
+// Dynamically managed loop for automatic firing to support Dev panel adjustments
+function startShootingClock() {
+    if (bulletIntervalId) clearInterval(bulletIntervalId);
+    
+    bulletIntervalId = setInterval(()=>{
+        if(paused) return;
 
-    let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
-    player.bullets.push(
-        new Projectile(
-            player.x,
-            player.y,
-            Math.cos(angle)*9,
-            Math.sin(angle)*9,
-            5,
-            "yellow",
-            player.damage,
-            "bullet"
-        )
-    );
-},player.fireRate);
+        let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
+        player.bullets.push(
+            new Projectile(
+                player.x,
+                player.y,
+                Math.cos(angle)*9,
+                Math.sin(angle)*9,
+                5,
+                "yellow",
+                player.damage,
+                "bullet"
+            )
+        );
+    }, player.fireRate);
+}
+startShootingClock();
 
 // SPEED ARROWS
 setInterval(()=>{
@@ -885,11 +822,6 @@ setInterval(() => {
 function update(){
     if(paused) return;
 
-    // Tick down Active Cooldown systems
-    for (let key in cooldowns) {
-        if (cooldowns[key].current > 0) cooldowns[key].current--;
-    }
-
     if(keys["w"]) player.y -= player.speed;
     if(keys["s"]) player.y += player.speed;
     if(keys["a"]) player.x -= player.speed;
@@ -912,20 +844,9 @@ function update(){
         }
     }
 
-    // Update active utility elements arrays
     singularities.forEach((s, idx) => {
         s.life--;
         if(s.life <= 0) singularities.splice(idx, 1);
-    });
-
-    smokeZones.forEach((zone, idx) => {
-        zone.life--;
-        if(zone.life <= 0) smokeZones.splice(idx, 1);
-    });
-
-    decoys.forEach((decoy, idx) => {
-        decoy.life--;
-        if(decoy.life <= 0) decoys.splice(idx, 1);
     });
 
     if(abilities.darkEnergy){
@@ -1013,18 +934,6 @@ function update(){
 function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // Draw background environmental modifications
-    smokeZones.forEach(zone => {
-        let smokeGrad = ctx.createRadialGradient(zone.x, zone.y, zone.radius * 0.2, zone.x, zone.y, zone.radius);
-        smokeGrad.addColorStop(0, "rgba(90, 90, 90, 0.4)");
-        smokeGrad.addColorStop(0.7, "rgba(60, 60, 60, 0.2)");
-        smokeGrad.addColorStop(1, "rgba(60, 60, 60, 0)");
-        ctx.fillStyle = smokeGrad;
-        ctx.beginPath();
-        ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
-        ctx.fill();
-    });
-
     singularities.forEach(s => {
         let grad = ctx.createRadialGradient(s.x, s.y, 5, s.x, s.y, s.radius);
         grad.addColorStop(0, "rgba(0,0,0,1)");
@@ -1063,26 +972,13 @@ function draw(){
         ctx.stroke();
     }
 
-    // Draw Decoys
-    decoys.forEach(decoy => {
-        ctx.fillStyle = "rgba(77, 225, 255, 0.35)";
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(decoy.x, decoy.y, decoy.r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-    });
-
-    // Draw Core Player Element
     ctx.fillStyle = "#4de1ff";
     ctx.beginPath();
     ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
     ctx.fill();
 
-    // Aim Indicator Line
-    ctx.strokeStyle = "rgba(255,255,255,0.4)";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 5;
     ctx.beginPath();
     ctx.moveTo(player.x,player.y);
     ctx.lineTo(mouse.x,mouse.y);
@@ -1115,11 +1011,6 @@ function updateUI(){
     
     document.getElementById("guardCount").textContent = guards.length;
     document.getElementById("maxGuards").textContent = abilities.guards ? abilities.guards.max : 0;
-
-    // Dynamically update hotbar cooldown indicator text strings
-    document.getElementById("cd-teleport").textContent = cooldowns.teleport.current > 0 ? `${Math.ceil(cooldowns.teleport.current / 60)}s` : "(1) Ready";
-    document.getElementById("cd-smoke").textContent = cooldowns.smoke.current > 0 ? `${Math.ceil(cooldowns.smoke.current / 60)}s` : "(2) Ready";
-    document.getElementById("cd-decoy").textContent = cooldowns.decoy.current > 0 ? `${Math.ceil(cooldowns.decoy.current / 60)}s` : "(3) Ready";
 }
 
 function showUpgrades(){
@@ -1132,7 +1023,7 @@ function showUpgrades(){
     const upgrades = [
         {
             name:"⚡ Faster Shooting",
-            effect:()=>{ player.fireRate = Math.max(100,player.fireRate-40); }
+            effect:()=>{ player.fireRate = Math.max(100,player.fireRate-40); startShootingClock(); }
         },
         {
             name:"💥 More Damage",
@@ -1250,11 +1141,6 @@ function showUpgrades(){
             round++;
             player.level++;
             paused = false;
-            
-            // Clear survival objects at round end so they don't linger across breaks
-            smokeZones = [];
-            decoys = [];
-            
             spawnWave();
         };
         choices.appendChild(div);
