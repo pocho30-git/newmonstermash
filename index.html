@@ -84,7 +84,8 @@ button{
 ⚔️ Round: <span id="round">1</span><br>
 👾 Enemies: <span id="left">0</span><br>
 ⭐ Level: <span id="level">1</span><br>
-🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span>
+🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span><br>
+<span id="mirrorUI" style="display:none">👥 Mirror ('E'): <span id="mirrorCD">READY</span></span>
 </div>
 
 <div id="upgradeMenu">
@@ -111,6 +112,11 @@ const mouse = {x:0,y:0};
 
 document.addEventListener("keydown",e=>{
     keys[e.key.toLowerCase()] = true;
+    
+    // Ability Keybinds
+    if(e.key.toLowerCase() === 'e' && !paused && abilities.mirror) {
+        usePhantomMirror();
+    }
 });
 
 document.addEventListener("keyup",e=>{
@@ -141,7 +147,9 @@ const abilities = {
     bananas:null,
     pizza:null,
     darkEnergy:null,
-    guards:null 
+    guards:null,
+    mirror: null,      // Active Decoy
+    repulsion: null    // Passive Shield
 };
 
 let enemies = [];
@@ -150,25 +158,25 @@ let damageTexts = [];
 let round = 1;
 let paused = false;
 
+// Time tracker for visual rotations/pulsing
+let gameTick = 0;
+
 class Enemy{
     constructor(){
         this.r = 20;
         this.color = `hsl(${Math.random()*360},80%,60%)`;
         this.flash = 0;
         
-        // Much slower speed scaling formula for late game balance
         this.baseSpeed = 1 + round * 0.05; 
         this.speed = this.baseSpeed;
         this.hp = 35 + round * 8;
 
-        // Prevention algorithm to avoid spawning directly on top of the player
         let safeSpawn = false;
         while(!safeSpawn) {
             this.x = Math.random() * canvas.width;
             this.y = Math.random() * canvas.height;
             
             let distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
-            // Minimum safe buffer distance of 250 pixels
             if(distToPlayer > 250) {
                 safeSpawn = true;
             }
@@ -176,8 +184,17 @@ class Enemy{
     }
 
     update(){
-        let dx = player.x - this.x;
-        let dy = player.y - this.y;
+        let targetX = player.x;
+        let targetY = player.y;
+
+        // If a phantom mirror is active, monsters prioritize the decoy
+        if (abilities.mirror && abilities.mirror.decoyActive) {
+            targetX = abilities.mirror.decoyX;
+            targetY = abilities.mirror.decoyY;
+        }
+
+        let dx = targetX - this.x;
+        let dy = targetY - this.y;
         let dist = Math.hypot(dx,dy);
 
         if (dist > 0) {
@@ -185,7 +202,8 @@ class Enemy{
             this.y += dy/dist * this.speed;
         }
 
-        if(dist < this.r + player.r){
+        // Only damage the actual player
+        if(dist < this.r + player.r && (!abilities.mirror || !abilities.mirror.decoyActive)){
             player.hp -= 0.15;
         }
 
@@ -215,6 +233,113 @@ class Enemy{
         ctx.arc(this.x,this.y+3,7,0,Math.PI);
         ctx.stroke();
     }
+}
+
+// Logic for using the Phantom Mirror ability
+function usePhantomMirror() {
+    if (abilities.mirror.cooldown > 0 || abilities.mirror.decoyActive) return;
+
+    // Place decoy at player's current location
+    abilities.mirror.decoyX = player.x;
+    abilities.mirror.decoyY = player.y;
+    abilities.mirror.decoyActive = true;
+    
+    // Decoy lasts 6 seconds (360 frames at 60 FPS)
+    setTimeout(() => {
+        abilities.mirror.decoyActive = false;
+        // Mirror is on cooldown for 15 seconds after despawning
+        abilities.mirror.cooldown = 900; 
+        document.getElementById("mirrorCD").textContent = "15s";
+    }, 6000);
+}
+
+// Draw the stationary Phantom Mirror decoy
+function drawPhantomMirrorDecoy() {
+    if (!abilities.mirror || !abilities.mirror.decoyActive) return;
+
+    ctx.save();
+    // Decoy is a darker grey and translucent version of player
+    ctx.fillStyle = "rgba(77, 77, 77, 0.6)"; 
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.lineWidth = 4;
+    
+    ctx.beginPath();
+    ctx.arc(abilities.mirror.decoyX, abilities.mirror.decoyY, player.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Pulse effect to show it is a projection
+    ctx.fillStyle = "rgba(255,255,255,0.1)";
+    let pulse = Math.sin(gameTick * 0.1) * 8;
+    ctx.beginPath();
+    ctx.arc(abilities.mirror.decoyX, abilities.mirror.decoyY, player.r + 5 + pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+// Handle the active Repulsion Field passive
+function handleRepulsionField() {
+    if (!abilities.repulsion) return;
+
+    let fieldRad = abilities.repulsion.radius;
+    let pushPower = 0.8; // Strength of the push
+
+    enemies.forEach(e => {
+        let dx = e.x - player.x;
+        let dy = e.y - player.y;
+        let dist = Math.hypot(dx, dy);
+
+        // If enemy is inside the shield bubble, apply dynamic pushback vector
+        if (dist < fieldRad + e.r) {
+            let normalizedX = dx / dist;
+            let normalizedY = dy / dist;
+            // Constant push force away from center
+            e.x += normalizedX * pushPower;
+            e.y += normalizedY * pushPower;
+            
+            // Visual indicator enemy is interacting with the shield
+            if (gameTick % 10 === 0 && Math.random() < 0.2) {
+                damageTexts.push(new DamageText(e.x, e.y, "•", "rgba(200,200,200,0.5)"));
+            }
+        }
+    });
+}
+
+// Draw the visual Repulsion Field swirling around the player
+function drawRepulsionFieldVisual() {
+    if (!abilities.repulsion) return;
+
+    ctx.save();
+    let rad = abilities.repulsion.radius;
+    let swirlyGrey = "rgba(160, 160, 160, 0.15)";
+    
+    ctx.translate(player.x, player.y);
+    // Swirling rotation over time
+    ctx.rotate(gameTick * 0.04); 
+
+    // Main translucent grey bubble
+    ctx.fillStyle = swirlyGrey;
+    ctx.beginPath();
+    ctx.arc(0, 0, rad, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Swirling visual accents/rings
+    ctx.strokeStyle = "rgba(200, 200, 200, 0.4)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([15, 20]); // Dashed lines give swirling effect
+    ctx.beginPath();
+    ctx.arc(0, 0, rad - 5, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    ctx.rotate(-gameTick * 0.08); // Counter-rotation inner ring
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    ctx.setLineDash([30, 5]);
+    ctx.beginPath();
+    ctx.arc(0, 0, rad - 15, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
 }
 
 class Guard {
@@ -563,23 +688,20 @@ function nearestEnemy(x,y){
     return closest;
 }
 
-setInterval(()=>{
-    if(paused) return;
-
-    let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
-    player.bullets.push(
-        new Projectile(
-            player.x,
-            player.y,
-            Math.cos(angle)*9,
-            Math.sin(angle)*9,
-            5,
-            "yellow",
-            player.damage,
-            "bullet"
-        )
-    );
-},player.fireRate);
+let lastShotTime = 0;
+function handlePlayerShooting(timestamp) {
+    if(!paused && timestamp - lastShotTime >= player.fireRate) {
+        lastShotTime = timestamp;
+        let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
+        player.bullets.push(
+            new Projectile(
+                player.x, player.y,
+                Math.cos(angle)*9, Math.sin(angle)*9,
+                5, "yellow", player.damage, "bullet"
+            )
+        );
+    }
+}
 
 // SPEED ARROWS
 setInterval(()=>{
@@ -705,6 +827,8 @@ setInterval(()=>{
 
 function update(){
     if(paused) return;
+    
+    gameTick++;
 
     if(keys["w"]) player.y -= player.speed;
     if(keys["s"]) player.y += player.speed;
@@ -714,6 +838,7 @@ function update(){
     player.x = Math.max(player.r,Math.min(canvas.width-player.r,player.x));
     player.y = Math.max(player.r,Math.min(canvas.height-player.r,player.y));
 
+    // Handle Active Abilities Logic
     if(abilities.darkEnergy){
         enemies.forEach((e,ei)=>{
             let dist = Math.hypot(player.x-e.x,player.y-e.y);
@@ -732,6 +857,20 @@ function update(){
             }
         });
     }
+    
+    // Process Mirror Cooldown Timer
+    if (abilities.mirror && abilities.mirror.cooldown > 0 && !abilities.mirror.decoyActive) {
+        abilities.mirror.cooldown--;
+        // Update UI every second
+        if (abilities.mirror.cooldown % 60 === 0) {
+            let sLeft = Math.ceil(abilities.mirror.cooldown / 60);
+            document.getElementById("mirrorCD").textContent = sLeft + "s";
+            if (sLeft === 0) document.getElementById("mirrorCD").textContent = "READY";
+        }
+    }
+    
+    // Process Passive Repulsion logic
+    handleRepulsionField();
 
     for (let i = guards.length - 1; i >= 0; i--) {
         if(guards[i]) guards[i].update();
@@ -806,6 +945,9 @@ function update(){
 
 function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
+    
+    // Draw Active Decoy first (background layer)
+    drawPhantomMirrorDecoy();
 
     if(abilities.darkEnergy){
         let g = ctx.createRadialGradient(
@@ -825,6 +967,9 @@ function draw(){
         ctx.arc(player.x, player.y, abilities.darkEnergy.radius, 0, Math.PI*2);
         ctx.fill();
     }
+    
+    // Draw Repulsion visual swirly rings around player
+    drawRepulsionFieldVisual();
 
     ctx.fillStyle = "#4de1ff";
     ctx.beginPath();
@@ -844,13 +989,14 @@ function draw(){
     damageTexts.forEach(d=>d.draw());
 }
 
-function loop(){
+function loop(timestamp){
+    handlePlayerShooting(timestamp);
     update();
     draw();
     requestAnimationFrame(loop);
 }
 
-loop();
+requestAnimationFrame(loop);
 
 function updateUI(){
     document.getElementById("hp").textContent = Math.max(0, Math.floor(player.hp));
@@ -872,15 +1018,15 @@ function showUpgrades(){
     const upgrades = [
         {
             name:"⚡ Faster Shooting",
-            effect:()=>{ player.fireRate = Math.max(100,player.fireRate-40); }
+            effect:()=>{ player.fireRate = Math.max(60, player.fireRate - 55); }
         },
         {
             name:"💥 More Damage",
-            effect:()=>{ player.damage += 6; }
+            effect:()=>{ player.damage += 12; }
         },
         {
             name:"👟 More Speed",
-            effect:()=>{ player.speed += 0.6; }
+            effect:()=>{ player.speed += 0.8; }
         },
         {
             name:"❤️ Heal",
@@ -941,6 +1087,38 @@ function showUpgrades(){
                     abilities.guards.max += 1; 
                 }
                 spawnRandomGuard();
+            }
+        },
+        // NEW ABILITIES
+        {
+            name:"👥 Phantom Mirror ('E')",
+            effect:()=>{
+                if(!abilities.mirror){ 
+                    // Init ability structure
+                    abilities.mirror = { 
+                        cooldown: 0, 
+                        decoyActive: false,
+                        decoyX: 0,
+                        decoyY: 0
+                    }; 
+                    // Show Ability UI
+                    document.getElementById("mirrorUI").style.display = "block";
+                } else {
+                    // Reduce cooldown slightly if already owned
+                    abilities.mirror.cooldown = 0; // instantly ready
+                    document.getElementById("mirrorCD").textContent = "READY";
+                }
+            }
+        },
+        {
+            name:"🌀 Repulsion Field",
+            effect:()=>{
+                if(!abilities.repulsion){ 
+                    abilities.repulsion = { radius: 75 }; 
+                } else {
+                    // Increase range if already owned
+                    abilities.repulsion.radius += 25;
+                }
             }
         }
     ];
