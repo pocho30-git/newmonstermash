@@ -10,8 +10,9 @@ body{
     margin:0;
     overflow:hidden;
     background:#111;
-    font-family:Arial;
+    font-family:Arial, sans-serif;
     color:white;
+    user-select: none;
 }
 
 canvas{
@@ -26,6 +27,57 @@ canvas{
     z-index:10;
     font-size:20px;
     line-height:1.5;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 10px;
+    border-radius: 8px;
+}
+
+#hotbar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 15px;
+    z-index: 10;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 12px;
+    border-radius: 16px;
+    border: 2px solid #444;
+}
+
+.hotbarBtn {
+    padding: 10px 16px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    color: white;
+    transition: background 0.2s, transform 0.1s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 110px;
+}
+
+.hotbarBtn:active {
+    transform: scale(0.95);
+}
+
+#btn-teleport { background: #8a2be2; }
+#btn-teleport:hover { background: #9b42ef; }
+
+#btn-smoke { background: #555555; }
+#btn-smoke:hover { background: #6d6d6d; }
+
+#btn-decoy { background: #008080; }
+#btn-decoy:hover { background: #00a3a3; }
+
+.cooldown-text {
+    font-size: 12px;
+    margin-top: 4px;
+    opacity: 0.8;
 }
 
 #upgradeMenu{
@@ -65,14 +117,23 @@ canvas{
     text-align:center;
     display:none;
     z-index:30;
+    background: rgba(0,0,0,0.8);
+    padding: 30px;
+    border-radius: 20px;
+    border: 3px solid red;
 }
 
-button{
+button.restartBtn{
     padding:10px 20px;
     font-size:20px;
     border:none;
     border-radius:10px;
     cursor:pointer;
+    background: red;
+    color: white;
+}
+button.restartBtn:hover {
+    background: #ff3333;
 }
 </style>
 </head>
@@ -87,6 +148,21 @@ button{
 🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span>
 </div>
 
+<div id="hotbar">
+    <button id="btn-teleport" class="hotbarBtn" onclick="triggerTeleport()">
+        <span>🌀 Teleport</span>
+        <span id="cd-teleport" class="cooldown-text">(1) Ready</span>
+    </button>
+    <button id="btn-smoke" class="hotbarBtn" onclick="triggerInvisibilityZone()">
+        <span>🌫️ Smoke</span>
+        <span id="cd-smoke" class="cooldown-text">(2) Ready</span>
+    </button>
+    <button id="btn-decoy" class="hotbarBtn" onclick="triggerDecoy()">
+        <span>👥 Decoy</span>
+        <span id="cd-decoy" class="cooldown-text">(3) Ready</span>
+    </button>
+</div>
+
 <div id="upgradeMenu">
 <h2>Choose An Upgrade</h2>
 <div id="choices"></div>
@@ -94,7 +170,7 @@ button{
 
 <div id="gameOver">
 <h1>GAME OVER</h1>
-<button onclick="location.reload()">Restart</button>
+<button class="restartBtn" onclick="location.reload()">Restart</button>
 </div>
 
 <canvas id="game"></canvas>
@@ -106,15 +182,31 @@ const ctx = canvas.getContext("2d");
 canvas.width = innerWidth;
 canvas.height = innerHeight;
 
+window.addEventListener("resize", () => {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+});
+
 const keys = {};
 const mouse = {x:0,y:0};
+
+// Cooldown Management state tracking (in frames, assuming ~60fps)
+const cooldowns = {
+    teleport: { current: 0, max: 180 }, // 3 seconds
+    smoke: { current: 0, max: 480 },    // 8 seconds
+    decoy: { current: 0, max: 600 }     // 10 seconds
+};
 
 document.addEventListener("keydown",e=>{
     keys[e.key.toLowerCase()] = true;
     
-    if(e.key.toLowerCase() === "q" && !paused && abilities.guards) {
+    if(paused) return;
+    if(e.key.toLowerCase() === "q" && abilities.guards) {
         spawnGuard();
     }
+    if(e.key === "1") triggerTeleport();
+    if(e.key === "2") triggerInvisibilityZone();
+    if(e.key === "3") triggerDecoy();
 });
 
 document.addEventListener("keyup",e=>{
@@ -150,10 +242,7 @@ const abilities = {
     vampiric:null,      
     frostNova:null,     
     chainLightning:null,
-    singularity:null,
-    meteors:null,       // NEW
-    orbitalBlades:null, // NEW
-    toxicSpores:null    // NEW
+    singularity:null    
 };
 
 let enemies = [];
@@ -161,16 +250,21 @@ let guards = [];
 let particles = [];
 let damageTexts = [];
 let singularities = []; 
-let meteors = [];       // NEW
-let toxicPuddles = [];  // NEW
-let orbitalAngle = 0;   // NEW
+let smokeZones = [];
+let decoys = [];
 let round = 1;
 let paused = false;
 
 class Enemy{
     constructor(){
-        this.x = Math.random()*canvas.width;
-        this.y = Math.random()*canvas.height;
+        // Spawn randomly around edges to prevent instant-spawning on top of player
+        if(Math.random() < 0.5) {
+            this.x = Math.random() < 0.5 ? -40 : canvas.width + 40;
+            this.y = Math.random() * canvas.height;
+        } else {
+            this.x = Math.random() * canvas.width;
+            this.y = Math.random() < 0.5 ? -40 : canvas.height + 40;
+        }
         this.r = 20;
         this.baseSpeed = 1 + round*0.15; 
         this.speed = this.baseSpeed;
@@ -181,6 +275,7 @@ class Enemy{
     }
 
     update(){
+        // Singularity pull happens BEFORE freeze checks
         singularities.forEach(s => {
             let sDist = Math.hypot(s.x - this.x, s.y - this.y);
             if(sDist < s.radius) {
@@ -197,14 +292,43 @@ class Enemy{
             return; 
         }
 
-        let dx = player.x - this.x;
-        let dy = player.y - this.y;
+        // Target Determination Logic (Decoy > Player)
+        let targetX = player.x;
+        let targetY = player.y;
+        let targetingDecoy = false;
+
+        if (decoys.length > 0) {
+            targetX = decoys[0].x;
+            targetY = decoys[0].y;
+            targetingDecoy = true;
+        }
+
+        let dx = targetX - this.x;
+        let dy = targetY - this.y;
         let dist = Math.hypot(dx,dy);
 
-        this.x += dx/dist * this.speed;
-        this.y += dy/dist * this.speed;
+        // Check if player is hidden inside an active smoke screen zone
+        let playerIsInvisible = false;
+        smokeZones.forEach(zone => {
+            let pZoneDist = Math.hypot(player.x - zone.x, player.y - zone.y);
+            if (pZoneDist < zone.radius) playerIsInvisible = true;
+        });
 
-        if(dist < this.r + player.r){
+        if (playerIsInvisible && !targetingDecoy) {
+            // Wander aimlessly inside smoke cover
+            this.x += (Math.random() - 0.5) * this.speed * 1.5;
+            this.y += (Math.random() - 0.5) * this.speed * 1.5;
+        } else {
+            // Standard pursuit movement
+            if (dist > 0) {
+                this.x += (dx/dist) * this.speed;
+                this.y += (dy/dist) * this.speed;
+            }
+        }
+
+        // Damage Player (only if tracking the true player, decoys take no mechanical impact)
+        let distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
+        if(distToPlayer < this.r + player.r && !playerIsInvisible){
             player.hp -= 0.15;
         }
 
@@ -414,7 +538,7 @@ class DamageText{
 
     draw(){
         ctx.fillStyle = this.color;
-        ctx.font = "18px Arial";
+        ctx.font = "bold 18px Arial";
         ctx.fillText(this.text,this.x,this.y);
     }
 }
@@ -440,8 +564,54 @@ class LightningArc {
 }
 let arcs = [];
 
+// ACTIVE SURVIVAL ABILITIES LOGIC
+function triggerTeleport() {
+    if (paused || cooldowns.teleport.current > 0) return;
+    
+    let dx = mouse.x - player.x;
+    let dy = mouse.y - player.y;
+    let dist = Math.hypot(dx, dy);
+    
+    if (dist > 0) {
+        let blinkDist = 200; 
+        player.x = Math.max(player.r, Math.min(canvas.width - player.r, player.x + (dx / dist) * blinkDist));
+        player.y = Math.max(player.r, Math.min(canvas.height - player.r, player.y + (dy / dist) * blinkDist));
+        
+        damageTexts.push(new DamageText(player.x - 20, player.y - 25, "BLINK!", "#00ffff"));
+        cooldowns.teleport.current = cooldowns.teleport.max;
+    }
+}
+
+function triggerInvisibilityZone() {
+    if (paused || cooldowns.smoke.current > 0) return;
+    
+    smokeZones.push({
+        x: player.x,
+        y: player.y,
+        radius: 140,
+        life: 240 // 4 seconds inside
+    });
+    
+    damageTexts.push(new DamageText(player.x - 35, player.y - 25, "SMOKE SCREEN", "#aaaaaa"));
+    cooldowns.smoke.current = cooldowns.smoke.max;
+}
+
+function triggerDecoy() {
+    if (paused || cooldowns.decoy.current > 0) return;
+    
+    decoys.push({
+        x: player.x,
+        y: player.y,
+        r: player.r,
+        life: 240 // 4 seconds decoy lifespan
+    });
+    
+    damageTexts.push(new DamageText(player.x - 25, player.y - 25, "DECOY DEPLOYED", "#00ffaa"));
+    cooldowns.decoy.current = cooldowns.decoy.max;
+}
+
 function damageEnemy(enemy,damage,dx,dy,sourceType){
-    if(enemy.frozenTimer > 0 && sourceType !== "darkEnergy" && sourceType !== "spore" && sourceType !== "meteor") {
+    if(enemy.frozenTimer > 0 && sourceType !== "darkEnergy") {
         if(Math.random() < 0.20) { 
             damage *= 1.8;
             damageTexts.push(new DamageText(enemy.x, enemy.y - 40, "SHATTER!", "#00e5ff"));
@@ -451,7 +621,7 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
     enemy.hp -= damage; 
     enemy.flash = 4;
 
-    if(sourceType !== "guard" && sourceType !== "darkEnergy" && sourceType !== "spore" && sourceType !== "meteor" && enemy.frozenTimer <= 0) {
+    if(sourceType !== "guard" && sourceType !== "darkEnergy" && enemy.frozenTimer <= 0) {
         enemy.x += dx * 6;
         enemy.y += dy * 6;
     }
@@ -467,16 +637,12 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
     }
 
     if (displayDamage > 0) {
-        let txtColor = "white";
-        if (sourceType === "meteor") txtColor = "#ff4500";
-        if (sourceType === "spore") txtColor = "#39ff14";
-        
         damageTexts.push(
             new DamageText(
                 enemy.x + (Math.random()*20-10),
                 enemy.y - 20,
                 "-" + displayDamage,
-                txtColor
+                "white"
             )
         );
     }
@@ -716,46 +882,13 @@ setInterval(() => {
     });
 }, 8000);
 
-// NEW POWERUP: METEOR STRIKE TIMERS
-setInterval(() => {
-    if (paused || !abilities.meteors) return;
-    let target = nearestEnemy(player.x, player.y);
-    if (!target) return;
-
-    // Launch a meteor falling from above down onto the enemy target location
-    meteors.push({
-        targetX: target.x,
-        targetY: target.y,
-        currentX: target.x + 150,
-        currentY: target.y - 400,
-        progress: 0,
-        speed: 0.04,
-        radius: abilities.meteors.radius,
-        damage: abilities.meteors.damage,
-        exploded: false,
-        blastLife: 0
-    });
-}, 3500);
-
-// NEW POWERUP: TOXIC SPORES TRAIL
-setInterval(() => {
-    if (paused || !abilities.toxicSpores) return;
-    
-    // Drop a puddle exactly where the player stands
-    toxicPuddles.push({
-        x: player.x,
-        y: player.y,
-        radius: abilities.toxicSpores.radius,
-        damage: abilities.toxicSpores.damage,
-        life: 180 // last around 3 seconds
-    });
-}, 450);
-
 function update(){
     if(paused) return;
 
-    let oldX = player.x;
-    let oldY = player.y;
+    // Tick down Active Cooldown systems
+    for (let key in cooldowns) {
+        if (cooldowns[key].current > 0) cooldowns[key].current--;
+    }
 
     if(keys["w"]) player.y -= player.speed;
     if(keys["s"]) player.y += player.speed;
@@ -764,68 +897,6 @@ function update(){
 
     player.x = Math.max(player.r,Math.min(canvas.width-player.r,player.x));
     player.y = Math.max(player.r,Math.min(canvas.height-player.r,player.y));
-
-    // Handle Orbital Blade Rotation System
-    if(abilities.orbitalBlades) {
-        orbitalAngle += 0.04;
-        let dist = abilities.orbitalBlades.distance;
-        
-        for(let i=0; i<abilities.orbitalBlades.count; i++) {
-            let offsetAngle = orbitalAngle + (i * (Math.PI * 2 / abilities.orbitalBlades.count));
-            let bladeX = player.x + Math.cos(offsetAngle) * dist;
-            let bladeY = player.y + Math.sin(offsetAngle) * dist;
-            let bladeSize = 16;
-
-            enemies.forEach(e => {
-                if(Math.hypot(e.x - bladeX, e.y - bladeY) < e.r + bladeSize) {
-                    damageEnemy(e, abilities.orbitalBlades.damage, Math.cos(offsetAngle), Math.sin(offsetAngle), "blade");
-                }
-            });
-        }
-    }
-
-    // Handle Toxic Puddles ticking
-    toxicPuddles.forEach((p, pIdx) => {
-        p.life--;
-        if(p.life <= 0) {
-            toxicPuddles.splice(pIdx, 1);
-            return;
-        }
-
-        // Ticks damage and slows enemies sitting in toxic sludge
-        enemies.forEach(e => {
-            if(Math.hypot(e.x - p.x, e.y - p.y) < e.r + p.radius) {
-                e.speed = e.baseSpeed * 0.4; // Stronger movement slow 
-                damageEnemy(e, p.damage, 0, 0, "spore");
-            }
-        });
-    });
-
-    // Handle Meteors Dropping Physics
-    meteors.forEach((m, mIdx) => {
-        if(!m.exploded) {
-            m.progress += m.speed;
-            m.currentX = (m.targetX + 150) - (150 * m.progress);
-            m.currentY = (m.targetY - 400) + (400 * m.progress);
-
-            if(m.progress >= 1) {
-                m.exploded = true;
-                m.blastLife = 20; // Explosion display length
-
-                // Blast radius checks
-                enemies.forEach(e => {
-                    let d = Math.hypot(e.x - m.targetX, e.y - m.targetY);
-                    if(d < m.radius + e.r) {
-                        let angle = Math.atan2(e.y - m.targetY, e.x - m.targetX);
-                        damageEnemy(e, m.damage, Math.cos(angle), Math.sin(angle), "meteor");
-                    }
-                });
-            }
-        } else {
-            m.blastLife--;
-            if(m.blastLife <= 0) meteors.splice(mIdx, 1);
-        }
-    });
 
     if(frostNovaActive && abilities.frostNova) {
         frostNovaRadius += 9;
@@ -841,9 +912,20 @@ function update(){
         }
     }
 
+    // Update active utility elements arrays
     singularities.forEach((s, idx) => {
         s.life--;
         if(s.life <= 0) singularities.splice(idx, 1);
+    });
+
+    smokeZones.forEach((zone, idx) => {
+        zone.life--;
+        if(zone.life <= 0) smokeZones.splice(idx, 1);
+    });
+
+    decoys.forEach((decoy, idx) => {
+        decoy.life--;
+        if(decoy.life <= 0) decoys.splice(idx, 1);
     });
 
     if(abilities.darkEnergy){
@@ -931,15 +1013,16 @@ function update(){
 function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // Draw Toxic Spore Puddles
-    toxicPuddles.forEach(p => {
-        ctx.fillStyle = "rgba(57, 255, 20, 0.25)";
-        ctx.strokeStyle = "rgba(50, 205, 50, 0.5)";
-        ctx.lineWidth = 2;
+    // Draw background environmental modifications
+    smokeZones.forEach(zone => {
+        let smokeGrad = ctx.createRadialGradient(zone.x, zone.y, zone.radius * 0.2, zone.x, zone.y, zone.radius);
+        smokeGrad.addColorStop(0, "rgba(90, 90, 90, 0.4)");
+        smokeGrad.addColorStop(0.7, "rgba(60, 60, 60, 0.2)");
+        smokeGrad.addColorStop(1, "rgba(60, 60, 60, 0)");
+        ctx.fillStyle = smokeGrad;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
         ctx.fill();
-        ctx.stroke();
     });
 
     singularities.forEach(s => {
@@ -980,74 +1063,35 @@ function draw(){
         ctx.stroke();
     }
 
-    // Draw Player Body
+    // Draw Decoys
+    decoys.forEach(decoy => {
+        ctx.fillStyle = "rgba(77, 225, 255, 0.35)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(decoy.x, decoy.y, decoy.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    });
+
+    // Draw Core Player Element
     ctx.fillStyle = "#4de1ff";
     ctx.beginPath();
     ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
     ctx.fill();
 
-    // Draw Aiming Line Pointer
-    ctx.strokeStyle = "white";
-    ctx.lineWidth = 5;
+    // Aim Indicator Line
+    ctx.strokeStyle = "rgba(255,255,255,0.4)";
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(player.x,player.y);
     ctx.lineTo(mouse.x,mouse.y);
     ctx.stroke();
 
-    // Draw Orbital Protection Blades Around Player Core
-    if(abilities.orbitalBlades) {
-        let dist = abilities.orbitalBlades.distance;
-        for(let i=0; i<abilities.orbitalBlades.count; i++) {
-            let offsetAngle = orbitalAngle + (i * (Math.PI * 2 / abilities.orbitalBlades.count));
-            let bladeX = player.x + Math.cos(offsetAngle) * dist;
-            let bladeY = player.y + Math.sin(offsetAngle) * dist;
-
-            ctx.save();
-            ctx.translate(bladeX, bladeY);
-            ctx.rotate(orbitalAngle * 4); // super fast rotation spin effect
-            ctx.fillStyle = "#e0e0e0";
-            ctx.strokeStyle = "#ff3333";
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            for(let j=0; j<6; j++) { // draw a jagged buzzsaw shape
-                let rot = (j * Math.PI / 3);
-                ctx.lineTo(Math.cos(rot)*16, Math.sin(rot)*16);
-                ctx.lineTo(Math.cos(rot+0.3)*8, Math.sin(rot+0.3)*8);
-            }
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            ctx.restore();
-        }
-    }
-
     player.bullets.forEach(b=>b.draw());
     guards.forEach(g => g.draw());
     enemies.forEach(e=>e.draw());
     damageTexts.forEach(d=>d.draw());
-
-    // Draw Falling and Exploding Meteors
-    meteors.forEach(m => {
-        if(!m.exploded) {
-            ctx.fillStyle = "#ff4500";
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = "#ff1a00";
-            ctx.beginPath();
-            ctx.arc(m.currentX, m.currentY, 14, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0; // reset
-        } else {
-            // Explosive expanding ring fire effect
-            let alpha = m.blastLife / 20;
-            ctx.fillStyle = `rgba(255, 69, 0, ${alpha * 0.4})`;
-            ctx.strokeStyle = `rgba(255, 140, 0, ${alpha})`;
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.arc(m.targetX, m.targetY, m.radius * (1 - m.blastLife/20), 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-        }
-    });
 
     arcs.forEach((arc, index) => {
         arc.draw();
@@ -1071,6 +1115,11 @@ function updateUI(){
     
     document.getElementById("guardCount").textContent = guards.length;
     document.getElementById("maxGuards").textContent = abilities.guards ? abilities.guards.max : 0;
+
+    // Dynamically update hotbar cooldown indicator text strings
+    document.getElementById("cd-teleport").textContent = cooldowns.teleport.current > 0 ? `${Math.ceil(cooldowns.teleport.current / 60)}s` : "(1) Ready";
+    document.getElementById("cd-smoke").textContent = cooldowns.smoke.current > 0 ? `${Math.ceil(cooldowns.smoke.current / 60)}s` : "(2) Ready";
+    document.getElementById("cd-decoy").textContent = cooldowns.decoy.current > 0 ? `${Math.ceil(cooldowns.decoy.current / 60)}s` : "(3) Ready";
 }
 
 function showUpgrades(){
@@ -1183,36 +1232,6 @@ function showUpgrades(){
                 if(!abilities.singularity){ abilities.singularity = { radius: 110 }; } 
                 else { abilities.singularity.radius += 30; }
             }
-        },
-        {
-            name:"☄️ Meteor Strike",
-            effect:()=>{
-                if(!abilities.meteors){ abilities.meteors = { radius: 120, damage: 45 }; } 
-                else { 
-                    abilities.meteors.radius += 25; 
-                    abilities.meteors.damage += 20; 
-                }
-            }
-        },
-        {
-            name:"🌀 Orbital Blades",
-            effect:()=>{
-                if(!abilities.orbitalBlades){ abilities.orbitalBlades = { count: 1, distance: 75, damage: 0.35 }; } 
-                else { 
-                    abilities.orbitalBlades.count = Math.min(6, abilities.orbitalBlades.count + 1); 
-                    abilities.orbitalBlades.damage += 0.15; 
-                }
-            }
-        },
-        {
-            name:"☣️ Toxic Spores",
-            effect:()=>{
-                if(!abilities.toxicSpores){ abilities.toxicSpores = { radius: 45, damage: 0.2 }; } 
-                else { 
-                    abilities.toxicSpores.radius += 15; 
-                    abilities.toxicSpores.damage += 0.1; 
-                }
-            }
         }
     ];
 
@@ -1231,6 +1250,11 @@ function showUpgrades(){
             round++;
             player.level++;
             paused = false;
+            
+            // Clear survival objects at round end so they don't linger across breaks
+            smokeZones = [];
+            decoys = [];
+            
             spawnWave();
         };
         choices.appendChild(div);
