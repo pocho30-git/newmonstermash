@@ -80,12 +80,11 @@ button{
 <body>
 
 <div id="ui">
-❤️ HP: <span id="hp">100</span><br>
+❤️ HP: <span id="hp">100</span> / 100<br>
 ⚔️ Round: <span id="round">1</span><br>
 👾 Enemies: <span id="left">0</span><br>
 ⭐ Level: <span id="level">1</span><br>
-🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span><br>
-<span id="mirrorUI" style="display:none">👥 Mirror ('E'): <span id="mirrorCD">READY</span></span>
+🛡️ Guards: <span id="guardCount">0</span>/<span id="maxGuards">0</span>
 </div>
 
 <div id="upgradeMenu">
@@ -113,9 +112,8 @@ const mouse = {x:0,y:0};
 document.addEventListener("keydown",e=>{
     keys[e.key.toLowerCase()] = true;
     
-    // Ability Keybinds
-    if(e.key.toLowerCase() === 'e' && !paused && abilities.mirror) {
-        usePhantomMirror();
+    if(e.key.toLowerCase() === "q" && !paused && abilities.guards) {
+        spawnGuard();
     }
 });
 
@@ -137,7 +135,8 @@ const player = {
     damage:15,
     fireRate:320,
     bullets:[],
-    level:1
+    level:1,
+    vampireKills: 0 
 };
 
 const abilities = {
@@ -148,62 +147,64 @@ const abilities = {
     pizza:null,
     darkEnergy:null,
     guards:null,
-    mirror: null,      // Active Decoy
-    repulsion: null    // Passive Shield
+    vampiric:null,      
+    frostNova:null,     
+    chainLightning:null,
+    singularity:null,
+    meteors:null,       // NEW
+    orbitalBlades:null, // NEW
+    toxicSpores:null    // NEW
 };
 
 let enemies = [];
 let guards = []; 
+let particles = [];
 let damageTexts = [];
+let singularities = []; 
+let meteors = [];       // NEW
+let toxicPuddles = [];  // NEW
+let orbitalAngle = 0;   // NEW
 let round = 1;
 let paused = false;
 
-// Time tracker for visual rotations/pulsing
-let gameTick = 0;
-
 class Enemy{
     constructor(){
+        this.x = Math.random()*canvas.width;
+        this.y = Math.random()*canvas.height;
         this.r = 20;
+        this.baseSpeed = 1 + round*0.15; 
+        this.speed = this.baseSpeed;
+        this.hp = 35 + round*8;
         this.color = `hsl(${Math.random()*360},80%,60%)`;
         this.flash = 0;
-        
-        this.baseSpeed = 1 + round * 0.05; 
-        this.speed = this.baseSpeed;
-        this.hp = 35 + round * 8;
-
-        let safeSpawn = false;
-        while(!safeSpawn) {
-            this.x = Math.random() * canvas.width;
-            this.y = Math.random() * canvas.height;
-            
-            let distToPlayer = Math.hypot(player.x - this.x, player.y - this.y);
-            if(distToPlayer > 250) {
-                safeSpawn = true;
-            }
-        }
+        this.frozenTimer = 0;
     }
 
     update(){
-        let targetX = player.x;
-        let targetY = player.y;
+        singularities.forEach(s => {
+            let sDist = Math.hypot(s.x - this.x, s.y - this.y);
+            if(sDist < s.radius) {
+                let sdx = s.x - this.x;
+                let sdy = s.y - this.y;
+                this.x += (sdx / sDist) * 2.5; 
+                this.y += (sdy / sDist) * 2.5;
+            }
+        });
 
-        // If a phantom mirror is active, monsters prioritize the decoy
-        if (abilities.mirror && abilities.mirror.decoyActive) {
-            targetX = abilities.mirror.decoyX;
-            targetY = abilities.mirror.decoyY;
+        if(this.frozenTimer > 0) {
+            this.frozenTimer--;
+            if(this.flash > 0) this.flash--;
+            return; 
         }
 
-        let dx = targetX - this.x;
-        let dy = targetY - this.y;
+        let dx = player.x - this.x;
+        let dy = player.y - this.y;
         let dist = Math.hypot(dx,dy);
 
-        if (dist > 0) {
-            this.x += dx/dist * this.speed;
-            this.y += dy/dist * this.speed;
-        }
+        this.x += dx/dist * this.speed;
+        this.y += dy/dist * this.speed;
 
-        // Only damage the actual player
-        if(dist < this.r + player.r && (!abilities.mirror || !abilities.mirror.decoyActive)){
+        if(dist < this.r + player.r){
             player.hp -= 0.15;
         }
 
@@ -215,11 +216,21 @@ class Enemy{
     }
 
     draw(){
-        ctx.fillStyle = this.flash > 0 ? "white" : this.color;
+        if(this.frozenTimer > 0) {
+            ctx.fillStyle = "#a6f2ff"; 
+        } else {
+            ctx.fillStyle = this.flash > 0 ? "white" : this.color;
+        }
 
         ctx.beginPath();
         ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
         ctx.fill();
+
+        if(this.frozenTimer > 0) {
+            ctx.strokeStyle = "#00d2ff";
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        }
 
         ctx.fillStyle = "black";
         ctx.beginPath();
@@ -235,271 +246,49 @@ class Enemy{
     }
 }
 
-// Logic for using the Phantom Mirror ability
-function usePhantomMirror() {
-    if (abilities.mirror.cooldown > 0 || abilities.mirror.decoyActive) return;
-
-    // Place decoy at player's current location
-    abilities.mirror.decoyX = player.x;
-    abilities.mirror.decoyY = player.y;
-    abilities.mirror.decoyActive = true;
-    
-    // Decoy lasts 6 seconds (360 frames at 60 FPS)
-    setTimeout(() => {
-        abilities.mirror.decoyActive = false;
-        // Mirror is on cooldown for 15 seconds after despawning
-        abilities.mirror.cooldown = 900; 
-        document.getElementById("mirrorCD").textContent = "15s";
-    }, 6000);
-}
-
-// Draw the stationary Phantom Mirror decoy
-function drawPhantomMirrorDecoy() {
-    if (!abilities.mirror || !abilities.mirror.decoyActive) return;
-
-    ctx.save();
-    // Decoy is a darker grey and translucent version of player
-    ctx.fillStyle = "rgba(77, 77, 77, 0.6)"; 
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.lineWidth = 4;
-    
-    ctx.beginPath();
-    ctx.arc(abilities.mirror.decoyX, abilities.mirror.decoyY, player.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Pulse effect to show it is a projection
-    ctx.fillStyle = "rgba(255,255,255,0.1)";
-    let pulse = Math.sin(gameTick * 0.1) * 8;
-    ctx.beginPath();
-    ctx.arc(abilities.mirror.decoyX, abilities.mirror.decoyY, player.r + 5 + pulse, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-}
-
-// Handle the active Repulsion Field passive
-function handleRepulsionField() {
-    if (!abilities.repulsion) return;
-
-    let fieldRad = abilities.repulsion.radius;
-    let pushPower = 0.8; // Strength of the push
-
-    enemies.forEach(e => {
-        let dx = e.x - player.x;
-        let dy = e.y - player.y;
-        let dist = Math.hypot(dx, dy);
-
-        // If enemy is inside the shield bubble, apply dynamic pushback vector
-        if (dist < fieldRad + e.r) {
-            let normalizedX = dx / dist;
-            let normalizedY = dy / dist;
-            // Constant push force away from center
-            e.x += normalizedX * pushPower;
-            e.y += normalizedY * pushPower;
-            
-            // Visual indicator enemy is interacting with the shield
-            if (gameTick % 10 === 0 && Math.random() < 0.2) {
-                damageTexts.push(new DamageText(e.x, e.y, "•", "rgba(200,200,200,0.5)"));
-            }
-        }
-    });
-}
-
-// Draw the visual Repulsion Field swirling around the player
-function drawRepulsionFieldVisual() {
-    if (!abilities.repulsion) return;
-
-    ctx.save();
-    let rad = abilities.repulsion.radius;
-    let swirlyGrey = "rgba(160, 160, 160, 0.15)";
-    
-    ctx.translate(player.x, player.y);
-    // Swirling rotation over time
-    ctx.rotate(gameTick * 0.04); 
-
-    // Main translucent grey bubble
-    ctx.fillStyle = swirlyGrey;
-    ctx.beginPath();
-    ctx.arc(0, 0, rad, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Swirling visual accents/rings
-    ctx.strokeStyle = "rgba(200, 200, 200, 0.4)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([15, 20]); // Dashed lines give swirling effect
-    ctx.beginPath();
-    ctx.arc(0, 0, rad - 5, 0, Math.PI * 2);
-    ctx.stroke();
-    
-    ctx.rotate(-gameTick * 0.08); // Counter-rotation inner ring
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-    ctx.setLineDash([30, 5]);
-    ctx.beginPath();
-    ctx.arc(0, 0, rad - 15, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.restore();
-}
-
 class Guard {
-    constructor(x, y, role) {
+    constructor(x, y) {
         this.x = x;
         this.y = y;
         this.r = 14;
         this.speed = 3.5;
-        this.role = role;
-        
-        if(this.role === "healer") {
-            this.color = "#ff47b6";
-            this.healCooldown = 0;
-            this.pulseRadius = 0;
-        } else if(this.role === "shooter") {
-            this.color = "#47f3ff";
-            this.shootCooldown = 0;
-        } else if(this.role === "bomber") {
-            this.color = "#ff8147";
-            this.speed = 4.5;
-        } else {
-            this.color = "#47ff9c";
-            this.damage = 1.5;
-        }
+        this.damage = 1.2; 
     }
 
     update() {
-        if (this.role === "healer") {
-            let dx = player.x - this.x;
-            let dy = player.y - this.y;
+        let target = nearestEnemy(this.x, this.y);
+        if (target) {
+            let dx = target.x - this.x;
+            let dy = target.y - this.y;
             let dist = Math.hypot(dx, dy);
-            if (dist > 50) {
+
+            if (dist > 0) {
                 this.x += (dx / dist) * this.speed;
                 this.y += (dy / dist) * this.speed;
             }
 
-            if (this.pulseRadius > 0) this.pulseRadius += 4;
-            if (this.pulseRadius > 100) this.pulseRadius = 0;
-
-            this.healCooldown++;
-            if (this.healCooldown >= 90) {
-                this.healCooldown = 0;
-                this.pulseRadius = 1;
-                if (player.hp < 100) {
-                    player.hp = Math.min(100, player.hp + 6);
-                    damageTexts.push(new DamageText(player.x, player.y - 30, "+6 HP", "#47ff9c"));
+            if (dist < this.r + target.r) {
+                damageEnemy(target, this.damage, dx / dist, dy / dist, "guard");
+                
+                if (target.hp <= 0) {
+                    let index = enemies.indexOf(target);
+                    if (index > -1) enemies.splice(index, 1);
                 }
             }
-        } 
-        else if (this.role === "shooter") {
+        } else {
             let dx = player.x - this.x;
             let dy = player.y - this.y;
             let dist = Math.hypot(dx, dy);
-            if (dist > 60) {
+            if (dist > 40) {
                 this.x += (dx / dist) * this.speed;
                 this.y += (dy / dist) * this.speed;
             }
-
-            this.shootCooldown++;
-            if (this.shootCooldown >= 45) {
-                let target = nearestEnemy(this.x, this.y);
-                if (target) {
-                    this.shootCooldown = 0;
-                    let angle = Math.atan2(target.y - this.y, target.x - this.x);
-                    player.bullets.push(
-                        new Projectile(
-                            this.x, this.y,
-                            Math.cos(angle) * 8, Math.sin(angle) * 8,
-                            5, "#47f3ff", 12, "bullet"
-                        )
-                    );
-                }
-            }
-        } 
-        else if (this.role === "bomber") {
-            let target = nearestEnemy(this.x, this.y);
-            if (target) {
-                let dx = target.x - this.x;
-                let dy = target.y - this.y;
-                let dist = Math.hypot(dx, dy);
-
-                if (dist > 0) {
-                    this.x += (dx / dist) * this.speed;
-                    this.y += (dy / dist) * this.speed;
-                }
-
-                if (dist < this.r + target.r) {
-                    this.explode();
-                }
-            } else {
-                let dx = player.x - this.x;
-                let dy = player.y - this.y;
-                let dist = Math.hypot(dx, dy);
-                if (dist > 40) {
-                    this.x += (dx / dist) * this.speed;
-                    this.y += (dy / dist) * this.speed;
-                }
-            }
-        } 
-        else if (this.role === "melee") {
-            let target = nearestEnemy(this.x, this.y);
-            if (target) {
-                let dx = target.x - this.x;
-                let dy = target.y - this.y;
-                let dist = Math.hypot(dx, dy);
-
-                if (dist > 0) {
-                    this.x += (dx / dist) * this.speed;
-                    this.y += (dy / dist) * this.speed;
-                }
-
-                if (dist < this.r + target.r) {
-                    damageEnemy(target, this.damage, dx / dist, dy / dist, "guard");
-                    if (target.hp <= 0) {
-                        let index = enemies.indexOf(target);
-                        if (index > -1) enemies.splice(index, 1);
-                    }
-                }
-            } else {
-                let dx = player.x - this.x;
-                let dy = player.y - this.y;
-                let dist = Math.hypot(dx, dy);
-                if (dist > 40) {
-                    this.x += (dx / dist) * this.speed;
-                    this.y += (dy / dist) * this.speed;
-                }
-            }
         }
-    }
-
-    explode() {
-        let blastRadius = 110;
-        for (let i = enemies.length - 1; i >= 0; i--) {
-            let e = enemies[i];
-            let dist = Math.hypot(e.x - this.x, e.y - this.y);
-            if (dist < blastRadius) {
-                let angle = Math.atan2(e.y - this.y, e.x - this.x);
-                damageEnemy(e, 75, Math.cos(angle), Math.sin(angle), "bullet");
-                if (e.hp <= 0) {
-                    enemies.splice(i, 1);
-                }
-            }
-        }
-        
-        damageTexts.push(new DamageText(this.x, this.y, "BOOM!", "#ff8147"));
-        let index = guards.indexOf(this);
-        if (index > -1) guards.splice(index, 1);
     }
 
     draw() {
         ctx.save();
-        if (this.role === "healer" && this.pulseRadius > 0) {
-            ctx.strokeStyle = `rgba(71, 255, 156, ${1 - this.pulseRadius/100})`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.pulseRadius, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-
-        ctx.fillStyle = this.color;
+        ctx.fillStyle = "#47ff9c";
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -507,7 +296,7 @@ class Guard {
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillStyle = "#116b3d";
         ctx.beginPath();
         ctx.arc(this.x, this.y + 2, 6, 0, Math.PI, true);
         ctx.lineTo(this.x, this.y - 6);
@@ -545,7 +334,7 @@ class Projectile{
         ctx.rotate(this.rotation);
 
         if(this.type === "bullet"){
-            ctx.fillStyle = this.color || "yellow";
+            ctx.fillStyle = "yellow";
             ctx.beginPath();
             ctx.arc(0,0,this.size,0,Math.PI*2);
             ctx.fill();
@@ -625,18 +414,51 @@ class DamageText{
 
     draw(){
         ctx.fillStyle = this.color;
-        ctx.font = "bold 18px Arial";
+        ctx.font = "18px Arial";
         ctx.fillText(this.text,this.x,this.y);
     }
 }
 
+class LightningArc {
+    constructor(x1, y1, x2, y2) {
+        this.x1 = x1; this.y1 = y1;
+        this.x2 = x2; this.y2 = y2;
+        this.life = 8;
+    }
+    draw() {
+        ctx.strokeStyle = "rgba(0, 255, 255, 0.7)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(this.x1, this.y1);
+        let midX = (this.x1 + this.x2) / 2 + (Math.random() - 0.5) * 12;
+        let midY = (this.y1 + this.y2) / 2 + (Math.random() - 0.5) * 12;
+        ctx.lineTo(midX, midY);
+        ctx.lineTo(this.x2, this.y2);
+        ctx.stroke();
+        this.life--;
+    }
+}
+let arcs = [];
+
 function damageEnemy(enemy,damage,dx,dy,sourceType){
+    if(enemy.frozenTimer > 0 && sourceType !== "darkEnergy" && sourceType !== "spore" && sourceType !== "meteor") {
+        if(Math.random() < 0.20) { 
+            damage *= 1.8;
+            damageTexts.push(new DamageText(enemy.x, enemy.y - 40, "SHATTER!", "#00e5ff"));
+        }
+    }
+
     enemy.hp -= damage; 
     enemy.flash = 4;
 
-    if(sourceType !== "guard" && sourceType !== "darkEnergy") {
+    if(sourceType !== "guard" && sourceType !== "darkEnergy" && sourceType !== "spore" && sourceType !== "meteor" && enemy.frozenTimer <= 0) {
         enemy.x += dx * 6;
         enemy.y += dy * 6;
+    }
+
+    if(sourceType === "bullet" && abilities.chainLightning && !enemy.hasChained) {
+        enemy.hasChained = true; 
+        triggerChainLightning(enemy, damage * 0.4, abilities.chainLightning.bounces);
     }
 
     let displayDamage = Math.floor(damage);
@@ -645,31 +467,82 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
     }
 
     if (displayDamage > 0) {
+        let txtColor = "white";
+        if (sourceType === "meteor") txtColor = "#ff4500";
+        if (sourceType === "spore") txtColor = "#39ff14";
+        
         damageTexts.push(
             new DamageText(
                 enemy.x + (Math.random()*20-10),
                 enemy.y - 20,
                 "-" + displayDamage,
-                "white"
+                txtColor
             )
         );
     }
+
+    if (enemy.hp <= 0 && abilities.vampiric) {
+        player.vampireKills++;
+        
+        if (player.vampireKills >= abilities.vampiric.killsNeeded) {
+            player.vampireKills = 0; 
+            let healAmt = Math.min(1, 100 - player.hp);
+            if (healAmt > 0) {
+                player.hp += healAmt;
+                damageTexts.push(new DamageText(player.x, player.y - 25, "+1 HP", "#4eff47"));
+            }
+        }
+    }
+}
+
+function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
+    let currentSource = startEnemy;
+    let bouncedTargets = [startEnemy];
+
+    for(let b = 0; b < maxBounces; b++) {
+        let closestNext = null;
+        let closestDist = 160; 
+
+        enemies.forEach(e => {
+            if(!bouncedTargets.includes(e)) {
+                let d = Math.hypot(e.x - currentSource.x, e.y - currentSource.y);
+                if(d < closestDist) {
+                    closestDist = d;
+                    closestNext = e;
+                }
+            }
+        });
+
+        if(closestNext) {
+            arcs.push(new LightningArc(currentSource.x, currentSource.y, closestNext.x, closestNext.y));
+            closestNext.hp -= chainDmg;
+            closestNext.flash = 4;
+            damageTexts.push(new DamageText(closestNext.x, closestNext.y - 20, "-" + Math.max(1, Math.floor(chainDmg)), "#00ffff"));
+            
+            bouncedTargets.push(closestNext);
+            currentSource = closestNext;
+        } else {
+            break; 
+        }
+    }
+    
+    enemies.forEach(e => e.hasChained = false);
 }
 
 function spawnWave(){
     enemies = [];
-    let amount = 5 + round * 3;
+    let amount = 5 + round*3;
 
-    for(let i=0; i<amount; i++){
+    for(let i=0;i<amount;i++){
         enemies.push(new Enemy());
     }
     updateUI();
 }
 
-function spawnRandomGuard() {
-    const roles = ["healer", "shooter", "melee", "bomber"];
-    const randomRole = roles[Math.floor(Math.random() * roles.length)];
-    guards.push(new Guard(player.x, player.y, randomRole));
+function spawnGuard() {
+    if (abilities.guards && guards.length < abilities.guards.max) {
+        guards.push(new Guard(player.x, player.y));
+    }
 }
 
 spawnWave();
@@ -688,33 +561,33 @@ function nearestEnemy(x,y){
     return closest;
 }
 
-let lastShotTime = 0;
-function handlePlayerShooting(timestamp) {
-    if(!paused && timestamp - lastShotTime >= player.fireRate) {
-        lastShotTime = timestamp;
-        let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
-        player.bullets.push(
-            new Projectile(
-                player.x, player.y,
-                Math.cos(angle)*9, Math.sin(angle)*9,
-                5, "yellow", player.damage, "bullet"
-            )
-        );
-    }
-}
+setInterval(()=>{
+    if(paused) return;
+
+    let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
+    player.bullets.push(
+        new Projectile(
+            player.x,
+            player.y,
+            Math.cos(angle)*9,
+            Math.sin(angle)*9,
+            5,
+            "yellow",
+            player.damage,
+            "bullet"
+        )
+    );
+},player.fireRate);
 
 // SPEED ARROWS
 setInterval(()=>{
     if(paused || !abilities.speedArrows) return;
 
-    let mx = 0;
-    let my = 0;
-
+    let mx = 0; let my = 0;
     if(keys["w"]) my -= 1;
     if(keys["s"]) my += 1;
     if(keys["a"]) mx -= 1;
     if(keys["d"]) mx += 1;
-
     if(mx===0 && my===0) return;
 
     let angle = Math.atan2(my,mx);
@@ -825,10 +698,64 @@ setInterval(()=>{
     player.bullets.push(pizza);
 },2000);
 
+let frostNovaRadius = 0;
+let frostNovaActive = false;
+setInterval(() => {
+    if(paused || !abilities.frostNova) return;
+    frostNovaActive = true;
+    frostNovaRadius = 0;
+}, 7000);
+
+setInterval(() => {
+    if(paused || !abilities.singularity) return;
+    singularities.push({
+        x: mouse.x,
+        y: mouse.y,
+        radius: abilities.singularity.radius,
+        life: 120 
+    });
+}, 8000);
+
+// NEW POWERUP: METEOR STRIKE TIMERS
+setInterval(() => {
+    if (paused || !abilities.meteors) return;
+    let target = nearestEnemy(player.x, player.y);
+    if (!target) return;
+
+    // Launch a meteor falling from above down onto the enemy target location
+    meteors.push({
+        targetX: target.x,
+        targetY: target.y,
+        currentX: target.x + 150,
+        currentY: target.y - 400,
+        progress: 0,
+        speed: 0.04,
+        radius: abilities.meteors.radius,
+        damage: abilities.meteors.damage,
+        exploded: false,
+        blastLife: 0
+    });
+}, 3500);
+
+// NEW POWERUP: TOXIC SPORES TRAIL
+setInterval(() => {
+    if (paused || !abilities.toxicSpores) return;
+    
+    // Drop a puddle exactly where the player stands
+    toxicPuddles.push({
+        x: player.x,
+        y: player.y,
+        radius: abilities.toxicSpores.radius,
+        damage: abilities.toxicSpores.damage,
+        life: 180 // last around 3 seconds
+    });
+}, 450);
+
 function update(){
     if(paused) return;
-    
-    gameTick++;
+
+    let oldX = player.x;
+    let oldY = player.y;
 
     if(keys["w"]) player.y -= player.speed;
     if(keys["s"]) player.y += player.speed;
@@ -838,7 +765,87 @@ function update(){
     player.x = Math.max(player.r,Math.min(canvas.width-player.r,player.x));
     player.y = Math.max(player.r,Math.min(canvas.height-player.r,player.y));
 
-    // Handle Active Abilities Logic
+    // Handle Orbital Blade Rotation System
+    if(abilities.orbitalBlades) {
+        orbitalAngle += 0.04;
+        let dist = abilities.orbitalBlades.distance;
+        
+        for(let i=0; i<abilities.orbitalBlades.count; i++) {
+            let offsetAngle = orbitalAngle + (i * (Math.PI * 2 / abilities.orbitalBlades.count));
+            let bladeX = player.x + Math.cos(offsetAngle) * dist;
+            let bladeY = player.y + Math.sin(offsetAngle) * dist;
+            let bladeSize = 16;
+
+            enemies.forEach(e => {
+                if(Math.hypot(e.x - bladeX, e.y - bladeY) < e.r + bladeSize) {
+                    damageEnemy(e, abilities.orbitalBlades.damage, Math.cos(offsetAngle), Math.sin(offsetAngle), "blade");
+                }
+            });
+        }
+    }
+
+    // Handle Toxic Puddles ticking
+    toxicPuddles.forEach((p, pIdx) => {
+        p.life--;
+        if(p.life <= 0) {
+            toxicPuddles.splice(pIdx, 1);
+            return;
+        }
+
+        // Ticks damage and slows enemies sitting in toxic sludge
+        enemies.forEach(e => {
+            if(Math.hypot(e.x - p.x, e.y - p.y) < e.r + p.radius) {
+                e.speed = e.baseSpeed * 0.4; // Stronger movement slow 
+                damageEnemy(e, p.damage, 0, 0, "spore");
+            }
+        });
+    });
+
+    // Handle Meteors Dropping Physics
+    meteors.forEach((m, mIdx) => {
+        if(!m.exploded) {
+            m.progress += m.speed;
+            m.currentX = (m.targetX + 150) - (150 * m.progress);
+            m.currentY = (m.targetY - 400) + (400 * m.progress);
+
+            if(m.progress >= 1) {
+                m.exploded = true;
+                m.blastLife = 20; // Explosion display length
+
+                // Blast radius checks
+                enemies.forEach(e => {
+                    let d = Math.hypot(e.x - m.targetX, e.y - m.targetY);
+                    if(d < m.radius + e.r) {
+                        let angle = Math.atan2(e.y - m.targetY, e.x - m.targetX);
+                        damageEnemy(e, m.damage, Math.cos(angle), Math.sin(angle), "meteor");
+                    }
+                });
+            }
+        } else {
+            m.blastLife--;
+            if(m.blastLife <= 0) meteors.splice(mIdx, 1);
+        }
+    });
+
+    if(frostNovaActive && abilities.frostNova) {
+        frostNovaRadius += 9;
+        enemies.forEach(e => {
+            let d = Math.hypot(e.x - player.x, e.y - player.y);
+            if(Math.abs(d - frostNovaRadius) < 15 && e.frozenTimer <= 0) {
+                e.frozenTimer = abilities.frostNova.duration;
+            }
+        });
+        
+        if(frostNovaRadius > abilities.frostNova.maxRadius) {
+            frostNovaActive = false;
+        }
+    }
+
+    singularities.forEach((s, idx) => {
+        s.life--;
+        if(s.life <= 0) singularities.splice(idx, 1);
+    });
+
     if(abilities.darkEnergy){
         enemies.forEach((e,ei)=>{
             let dist = Math.hypot(player.x-e.x,player.y-e.y);
@@ -850,31 +857,11 @@ function update(){
                 let dy = (e.y-player.y)/dist;
 
                 damageEnemy(e, abilities.darkEnergy.damage, dx, dy, "darkEnergy");
-
-                if(e.hp <= 0){
-                    enemies.splice(ei,1);
-                }
             }
         });
     }
-    
-    // Process Mirror Cooldown Timer
-    if (abilities.mirror && abilities.mirror.cooldown > 0 && !abilities.mirror.decoyActive) {
-        abilities.mirror.cooldown--;
-        // Update UI every second
-        if (abilities.mirror.cooldown % 60 === 0) {
-            let sLeft = Math.ceil(abilities.mirror.cooldown / 60);
-            document.getElementById("mirrorCD").textContent = sLeft + "s";
-            if (sLeft === 0) document.getElementById("mirrorCD").textContent = "READY";
-        }
-    }
-    
-    // Process Passive Repulsion logic
-    handleRepulsionField();
 
-    for (let i = guards.length - 1; i >= 0; i--) {
-        if(guards[i]) guards[i].update();
-    }
+    guards.forEach(g => g.update());
 
     player.bullets.forEach((b,bi)=>{
         b.update();
@@ -909,10 +896,6 @@ function update(){
                 if(b.type !== "pizza"){
                     player.bullets.splice(bi,1);
                 }
-
-                if(e.hp <= 0){
-                    enemies.splice(ei,1);
-                }
             }
         });
 
@@ -920,6 +903,8 @@ function update(){
             player.bullets.splice(bi,1);
         }
     });
+
+    enemies = enemies.filter(e => e.hp > 0);
 
     damageTexts.forEach((d,i)=>{
         d.update();
@@ -945,9 +930,28 @@ function update(){
 
 function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    
-    // Draw Active Decoy first (background layer)
-    drawPhantomMirrorDecoy();
+
+    // Draw Toxic Spore Puddles
+    toxicPuddles.forEach(p => {
+        ctx.fillStyle = "rgba(57, 255, 20, 0.25)";
+        ctx.strokeStyle = "rgba(50, 205, 50, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    });
+
+    singularities.forEach(s => {
+        let grad = ctx.createRadialGradient(s.x, s.y, 5, s.x, s.y, s.radius);
+        grad.addColorStop(0, "rgba(0,0,0,1)");
+        grad.addColorStop(0.3, "rgba(50,10,90,0.7)");
+        grad.addColorStop(1, "rgba(130,0,255,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.radius, 0, Math.PI*2);
+        ctx.fill();
+    });
 
     if(abilities.darkEnergy){
         let g = ctx.createRadialGradient(
@@ -967,15 +971,22 @@ function draw(){
         ctx.arc(player.x, player.y, abilities.darkEnergy.radius, 0, Math.PI*2);
         ctx.fill();
     }
-    
-    // Draw Repulsion visual swirly rings around player
-    drawRepulsionFieldVisual();
 
+    if(frostNovaActive && abilities.frostNova) {
+        ctx.strokeStyle = "rgba(130, 235, 255, 0.3)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, frostNovaRadius, 0, Math.PI*2);
+        ctx.stroke();
+    }
+
+    // Draw Player Body
     ctx.fillStyle = "#4de1ff";
     ctx.beginPath();
     ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
     ctx.fill();
 
+    // Draw Aiming Line Pointer
     ctx.strokeStyle = "white";
     ctx.lineWidth = 5;
     ctx.beginPath();
@@ -983,20 +994,74 @@ function draw(){
     ctx.lineTo(mouse.x,mouse.y);
     ctx.stroke();
 
+    // Draw Orbital Protection Blades Around Player Core
+    if(abilities.orbitalBlades) {
+        let dist = abilities.orbitalBlades.distance;
+        for(let i=0; i<abilities.orbitalBlades.count; i++) {
+            let offsetAngle = orbitalAngle + (i * (Math.PI * 2 / abilities.orbitalBlades.count));
+            let bladeX = player.x + Math.cos(offsetAngle) * dist;
+            let bladeY = player.y + Math.sin(offsetAngle) * dist;
+
+            ctx.save();
+            ctx.translate(bladeX, bladeY);
+            ctx.rotate(orbitalAngle * 4); // super fast rotation spin effect
+            ctx.fillStyle = "#e0e0e0";
+            ctx.strokeStyle = "#ff3333";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for(let j=0; j<6; j++) { // draw a jagged buzzsaw shape
+                let rot = (j * Math.PI / 3);
+                ctx.lineTo(Math.cos(rot)*16, Math.sin(rot)*16);
+                ctx.lineTo(Math.cos(rot+0.3)*8, Math.sin(rot+0.3)*8);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
+
     player.bullets.forEach(b=>b.draw());
     guards.forEach(g => g.draw());
     enemies.forEach(e=>e.draw());
     damageTexts.forEach(d=>d.draw());
+
+    // Draw Falling and Exploding Meteors
+    meteors.forEach(m => {
+        if(!m.exploded) {
+            ctx.fillStyle = "#ff4500";
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#ff1a00";
+            ctx.beginPath();
+            ctx.arc(m.currentX, m.currentY, 14, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0; // reset
+        } else {
+            // Explosive expanding ring fire effect
+            let alpha = m.blastLife / 20;
+            ctx.fillStyle = `rgba(255, 69, 0, ${alpha * 0.4})`;
+            ctx.strokeStyle = `rgba(255, 140, 0, ${alpha})`;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(m.targetX, m.targetY, m.radius * (1 - m.blastLife/20), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        }
+    });
+
+    arcs.forEach((arc, index) => {
+        arc.draw();
+        if(arc.life <= 0) arcs.splice(index, 1);
+    });
 }
 
-function loop(timestamp){
-    handlePlayerShooting(timestamp);
+function loop(){
     update();
     draw();
     requestAnimationFrame(loop);
 }
 
-requestAnimationFrame(loop);
+loop();
 
 function updateUI(){
     document.getElementById("hp").textContent = Math.max(0, Math.floor(player.hp));
@@ -1018,15 +1083,15 @@ function showUpgrades(){
     const upgrades = [
         {
             name:"⚡ Faster Shooting",
-            effect:()=>{ player.fireRate = Math.max(60, player.fireRate - 55); }
+            effect:()=>{ player.fireRate = Math.max(100,player.fireRate-40); }
         },
         {
             name:"💥 More Damage",
-            effect:()=>{ player.damage += 12; }
+            effect:()=>{ player.damage += 6; }
         },
         {
             name:"👟 More Speed",
-            effect:()=>{ player.speed += 0.8; }
+            effect:()=>{ player.speed += 0.6; }
         },
         {
             name:"❤️ Heal",
@@ -1081,43 +1146,71 @@ function showUpgrades(){
         {
             name:"🛡️ Guard Capacity +1",
             effect:()=>{
-                if(!abilities.guards){ 
-                    abilities.guards = { max: 1 }; 
+                if(!abilities.guards){ abilities.guards = { max: 1 }; } 
+                else { abilities.guards.max += 1; }
+            }
+        },
+        {
+            name:"🧛 Vampiric Essence",
+            effect:()=>{
+                if(!abilities.vampiric){ 
+                    abilities.vampiric = { killsNeeded: 8 }; 
                 } else { 
-                    abilities.guards.max += 1; 
-                }
-                spawnRandomGuard();
+                    abilities.vampiric.killsNeeded = Math.max(3, abilities.vampiric.killsNeeded - 2); 
+                } 
             }
         },
-        // NEW ABILITIES
         {
-            name:"👥 Phantom Mirror ('E')",
+            name:"🧊 Frost Nova",
             effect:()=>{
-                if(!abilities.mirror){ 
-                    // Init ability structure
-                    abilities.mirror = { 
-                        cooldown: 0, 
-                        decoyActive: false,
-                        decoyX: 0,
-                        decoyY: 0
-                    }; 
-                    // Show Ability UI
-                    document.getElementById("mirrorUI").style.display = "block";
-                } else {
-                    // Reduce cooldown slightly if already owned
-                    abilities.mirror.cooldown = 0; // instantly ready
-                    document.getElementById("mirrorCD").textContent = "READY";
+                if(!abilities.frostNova){ abilities.frostNova = { duration: 80, maxRadius: 240 }; } 
+                else { 
+                    abilities.frostNova.duration += 40; 
+                    abilities.frostNova.maxRadius += 160; 
                 }
             }
         },
         {
-            name:"🌀 Repulsion Field",
+            name:"⚡ Chain Lightning",
             effect:()=>{
-                if(!abilities.repulsion){ 
-                    abilities.repulsion = { radius: 75 }; 
-                } else {
-                    // Increase range if already owned
-                    abilities.repulsion.radius += 25;
+                if(!abilities.chainLightning){ abilities.chainLightning = { bounces: 1 }; } 
+                else { abilities.chainLightning.bounces += 1; }
+            }
+        },
+        {
+            name:"🧲 Gravity Singularity",
+            effect:()=>{
+                if(!abilities.singularity){ abilities.singularity = { radius: 110 }; } 
+                else { abilities.singularity.radius += 30; }
+            }
+        },
+        {
+            name:"☄️ Meteor Strike",
+            effect:()=>{
+                if(!abilities.meteors){ abilities.meteors = { radius: 120, damage: 45 }; } 
+                else { 
+                    abilities.meteors.radius += 25; 
+                    abilities.meteors.damage += 20; 
+                }
+            }
+        },
+        {
+            name:"🌀 Orbital Blades",
+            effect:()=>{
+                if(!abilities.orbitalBlades){ abilities.orbitalBlades = { count: 1, distance: 75, damage: 0.35 }; } 
+                else { 
+                    abilities.orbitalBlades.count = Math.min(6, abilities.orbitalBlades.count + 1); 
+                    abilities.orbitalBlades.damage += 0.15; 
+                }
+            }
+        },
+        {
+            name:"☣️ Toxic Spores",
+            effect:()=>{
+                if(!abilities.toxicSpores){ abilities.toxicSpores = { radius: 45, damage: 0.2 }; } 
+                else { 
+                    abilities.toxicSpores.radius += 15; 
+                    abilities.toxicSpores.damage += 0.1; 
                 }
             }
         }
